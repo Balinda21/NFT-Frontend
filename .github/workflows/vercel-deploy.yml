@@ -20,8 +20,8 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build web
-        run: npm run build
+      - name: Build web (Expo CLI)
+        run: npx expo-cli build:web --no-pwa
 
       - name: Vercel Deploy
         uses: amondnet/vercel-action@v20
