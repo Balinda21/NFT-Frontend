@@ -129,6 +129,26 @@ function MainTabNavigator() {
         }}
       />
       <Tab.Screen
+        name="AIQuantificationTab"
+        component={AIQuantificationScreen}
+        options={{
+          tabBarLabel: 'AI Quantification',
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="grid" size={size} color={color} />
+          ),
+        }}
+      />
+      <Tab.Screen
+        name="LoanTab"
+        component={LoanScreen}
+        options={{
+          tabBarLabel: 'Loan',
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="cash" size={size} color={color} />
+          ),
+        }}
+      />
+      <Tab.Screen
         name="AccountTab"
         component={AccountStack}
         options={({ route }) => {

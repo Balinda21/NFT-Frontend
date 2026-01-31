@@ -205,17 +205,17 @@ const HomeScreen: React.FC = () => {
         <Text style={styles.miniCardTitle}>{asset.label}</Text>
         <Text style={styles.miniCardSubtitle}>{asset.subtitle}</Text>
         <View style={styles.miniSparkline}>
-          <Sparkline data={history} width={60} height={24} />
+          <Sparkline data={history} width={60} height={24} isPositive={isPositive} />
         </View>
         <View style={styles.miniCardFooter}>
-          <Text style={[styles.miniCardValue, { color: isPositive ? colors.accent : '#FF6B6B' }]}>
+          <Text style={[styles.miniCardValue, { color: isPositive ? colors.accent : '#E57373' }]}>
             {asset.change24h.toFixed(2)}%
           </Text>
-          <View style={[styles.miniCardCircle, { backgroundColor: isPositive ? colors.accent + '20' : '#FF6B6B20' }]}>
+          <View style={[styles.miniCardCircle, { backgroundColor: isPositive ? colors.accent + '20' : '#E5737320' }]}>
             <Ionicons
               name={isPositive ? 'trending-up' : 'trending-down'}
               size={14}
-              color={isPositive ? colors.accent : '#FF6B6B'}
+              color={isPositive ? colors.accent : '#E57373'}
             />
           </View>
         </View>
@@ -225,29 +225,26 @@ const HomeScreen: React.FC = () => {
 
   const renderPairRow = ({ item }: { item: PairRow }) => {
     const isNegative = item.change24h < 0;
-    const changeColor = isNegative ? '#FF6B6B' : colors.accent;
+    const isPositive = !isNegative;
+    const changeColor = isNegative ? '#E57373' : '#81C784';
     const history = pairHistory[item.id] || [];
 
     return (
       <View style={styles.pairRow}>
         <View style={styles.pairLeft}>
-          <View style={styles.pairIconContainer}>
-            {item.image ? (
+          {item.image ? (
+            <View style={styles.pairIconContainer}>
               <Image source={{ uri: item.image }} style={styles.pairIcon} />
-            ) : (
-              <View style={styles.pairIconPlaceholder}>
-                <Text style={styles.pairIconQuestion}>?</Text>
-              </View>
-            )}
-          </View>
-          <View>
+            </View>
+          ) : null}
+          <View style={item.image ? styles.pairTextWithIcon : undefined}>
             <Text style={styles.pairSymbol}>{item.symbol}</Text>
             <Text style={styles.pairName}>{item.name}</Text>
           </View>
         </View>
 
         <View style={styles.pairSparkline}>
-          <Sparkline data={history} width={80} height={32} />
+          <Sparkline data={history} width={80} height={32} isPositive={isPositive} />
         </View>
 
         <View style={styles.pairRight}>
@@ -595,33 +592,22 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     flex: 1.2,
   },
+  pairTextWithIcon: {
+    marginLeft: 12,
+  },
   pairIconContainer: {
     width: 40,
     height: 40,
     borderRadius: 20,
-    marginRight: 12,
     backgroundColor: '#1A1A1A',
     alignItems: 'center',
     justifyContent: 'center',
     overflow: 'hidden',
   },
   pairIcon: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-  },
-  pairIconPlaceholder: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: '#2F8BFF',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  pairIconQuestion: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '600',
+    width: 40,
+    height: 40,
+    borderRadius: 20,
   },
   pairSymbol: {
     color: colors.textPrimary,

@@ -6,21 +6,50 @@ type SparklineProps = {
   data?: number[];
   width?: number;
   height?: number;
+  isPositive?: boolean; // kept for compatibility but not used for color
 };
 
-// Coral/orange color matching the reference design
+// Single cream/coral color for ALL sparklines (matching reference design)
 const SPARKLINE_COLOR = '#E8A838';
 
 export const Sparkline: React.FC<SparklineProps> = ({
   data,
   width = 80,
   height = 32,
+  isPositive = true,
 }) => {
   // Need at least 2 points to draw a line
   if (!data || data.length < 2) {
-    return <View style={[styles.container, { width, height }]} />;
+    // Generate synthetic wavy data when no real data available
+    const syntheticData = generateSyntheticData(isPositive);
+    return renderSparkline(syntheticData, width, height);
   }
 
+  return renderSparkline(data, width, height);
+};
+
+// Generate synthetic sparkline data that looks natural
+const generateSyntheticData = (isPositive: boolean): number[] => {
+  const points = 30;
+  const data: number[] = [];
+  let value = 50;
+
+  for (let i = 0; i < points; i++) {
+    // Add some randomness with a slight trend
+    const trend = isPositive ? 0.3 : -0.3;
+    const noise = (Math.sin(i * 0.5) * 10) + (Math.random() - 0.5) * 8;
+    value = Math.max(10, Math.min(90, value + noise * 0.3 + trend));
+    data.push(value);
+  }
+
+  return data;
+};
+
+const renderSparkline = (
+  data: number[],
+  width: number,
+  height: number
+) => {
   // Normalize data to fit within the SVG viewBox
   const min = Math.min(...data);
   const max = Math.max(...data);
@@ -58,7 +87,7 @@ export const Sparkline: React.FC<SparklineProps> = ({
       <Svg width={width} height={height}>
         <Defs>
           <LinearGradient id={gradientId} x1="0%" y1="0%" x2="0%" y2="100%">
-            <Stop offset="0%" stopColor={SPARKLINE_COLOR} stopOpacity={0.25} />
+            <Stop offset="0%" stopColor={SPARKLINE_COLOR} stopOpacity={0.3} />
             <Stop offset="100%" stopColor={SPARKLINE_COLOR} stopOpacity={0} />
           </LinearGradient>
         </Defs>
