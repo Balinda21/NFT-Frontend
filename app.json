@@ -25,7 +25,9 @@
       "package": "com.NFT.app"
     },
     "web": {
-      "favicon": "./assets/favicon.png"
+      "favicon": "./assets/favicon.png",
+      "bundler": "webpack",
+      "output": "static"
     },
     "plugins": [
       "@react-native-google-signin/google-signin"
