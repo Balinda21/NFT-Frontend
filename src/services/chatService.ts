@@ -76,14 +76,16 @@ class ChatService {
 
     this.socket = io(baseUrl, {
       path: '/socket.io',
-      transports: ['websocket', 'polling'],
+      transports: ['polling', 'websocket'], // Try polling first (more reliable for cold starts)
       auth: {
         token,
       },
       reconnection: true,
-      reconnectionDelay: 1000,
-      reconnectionDelayMax: 5000,
-      reconnectionAttempts: 5,
+      reconnectionDelay: 2000,
+      reconnectionDelayMax: 10000,
+      reconnectionAttempts: 10,
+      timeout: 60000, // 60 second timeout for Render cold starts
+      forceNew: true,
     });
 
     this.socket.on('connect', () => {
@@ -105,7 +107,8 @@ class ChatService {
     });
 
     this.socket.on('connect_error', (error) => {
-      console.error('Socket connection error:', error);
+      // Use warn instead of error - timeouts are common with Render free tier cold starts
+      console.warn('Socket connection issue (will auto-retry):', error.message || error);
       this.isConnected = false;
     });
 

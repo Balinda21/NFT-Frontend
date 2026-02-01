@@ -162,13 +162,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return !!token && !!user;
   }, [token, user]);
 
-  // Connect socket when authenticated
+  // Connect socket when authenticated (with delay for Render cold starts)
   const socketConnectedRef = useRef(false);
   useEffect(() => {
     if (isAuthenticated && token && !socketConnectedRef.current) {
-      console.log('[AuthContext] Connecting socket for real-time updates...');
-      chatService.connect(token);
-      socketConnectedRef.current = true;
+      console.log('[AuthContext] Will connect socket for real-time updates...');
+      // Delay socket connection to allow Render server to wake up
+      const connectTimeout = setTimeout(() => {
+        try {
+          console.log('[AuthContext] Connecting socket now...');
+          chatService.connect(token);
+          socketConnectedRef.current = true;
+        } catch (error) {
+          console.warn('[AuthContext] Socket connection failed, will retry:', error);
+        }
+      }, 1000);
+      return () => clearTimeout(connectTimeout);
     } else if (!isAuthenticated && socketConnectedRef.current) {
       console.log('[AuthContext] Disconnecting socket...');
       chatService.disconnect();

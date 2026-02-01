@@ -14,6 +14,7 @@ import {
   Image,
   Modal,
   Alert,
+  Dimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
@@ -26,7 +27,9 @@ import { chatService, ChatMessage, ChatSession } from '../services/chatService';
 import { uploadImage, uploadAudio } from '../services/cloudinaryService';
 import { API_ENDPOINTS } from '../config/api';
 import { api } from '../services/apiClient';
-// Simple date formatting without date-fns
+
+const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
+
 const formatTime = (dateString: string) => {
   try {
     const date = new Date(dateString);
@@ -57,160 +60,96 @@ const ChatScreen: React.FC = () => {
   const [isRecording, setIsRecording] = useState(false);
   const [recording, setRecording] = useState<Audio.Recording | null>(null);
   const [recordingDuration, setRecordingDuration] = useState(0);
-  const [recordingUri, setRecordingUri] = useState<string | null>(null); // Store local URI for immediate display
-  const [uploadingAudio, setUploadingAudio] = useState<string | null>(null); // Track which message is uploading
+  const [recordingUri, setRecordingUri] = useState<string | null>(null);
+  const [uploadingAudio, setUploadingAudio] = useState<string | null>(null);
   const [playingAudio, setPlayingAudio] = useState<string | null>(null);
-  const [sound, setSound] = useState<Audio.Sound | null>(null);
-  const [audioDurations, setAudioDurations] = useState<Record<string, number>>({}); // Store durations for each audio
-  const waveformAnim = useRef(new Animated.Value(0)).current; // Animation for waveform
-  const recordingWaveformAnim = useRef(new Animated.Value(0)).current; // Animation for recording waveform
+  const [audioDurations, setAudioDurations] = useState<Record<string, number>>({});
+  const [audioPositions, setAudioPositions] = useState<Record<string, number>>({});
+  const [viewingImage, setViewingImage] = useState<string | null>(null);
+  const soundRef = useRef<Audio.Sound | null>(null); // Use ref to avoid echo/multiple instances
+  const isPlayingRef = useRef<boolean>(false); // Prevent multiple simultaneous play attempts
+  const waveformAnim = useRef(new Animated.Value(0)).current;
+  const recordingWaveformAnim = useRef(new Animated.Value(0)).current;
   const scrollViewRef = useRef<ScrollView>(null);
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const recordingTimerRef = useRef<NodeJS.Timeout | null>(null);
-  
-  // Animation values for empty state
   const iconAnim = useRef(new Animated.Value(0)).current;
 
-  // Animate empty state
   useEffect(() => {
     if (messages.length === 0 && !loading) {
-      // Start icon animation
       Animated.loop(
         Animated.sequence([
-          Animated.timing(iconAnim, {
-            toValue: 1,
-            duration: 1500,
-            useNativeDriver: true,
-          }),
-          Animated.timing(iconAnim, {
-            toValue: 0,
-            duration: 1500,
-            useNativeDriver: true,
-          }),
+          Animated.timing(iconAnim, { toValue: 1, duration: 1500, useNativeDriver: true }),
+          Animated.timing(iconAnim, { toValue: 0, duration: 1500, useNativeDriver: true }),
         ])
       ).start();
     }
   }, [messages.length, loading]);
 
-  // Initialize chat session and socket
   useEffect(() => {
-    if (!token) {
-      console.log('No token available');
-      return;
-    }
+    if (!token) return;
 
     const initializeChat = async () => {
       try {
         setLoading(true);
         setError(null);
-        
-        // Connect socket
         chatService.connect(token);
-
-        // Wait a bit for socket to connect
         await new Promise(resolve => setTimeout(resolve, 500));
 
         let chatSession: ChatSession;
-
-        // If admin and sessionId provided, use that session
         if (user?.role === 'ADMIN' && routeParams?.sessionId) {
-          // For admin, get all sessions and find the one we need
-          try {
-            const sessionsResponse = await api.get<ChatSession[]>(API_ENDPOINTS.CHAT.SESSIONS + '/all');
-            if (sessionsResponse.success && sessionsResponse.data) {
-              const sessions = Array.isArray(sessionsResponse.data) ? sessionsResponse.data : [];
-              const foundSession = sessions.find(s => s.id === routeParams.sessionId);
-              if (foundSession) {
-                chatSession = foundSession;
-              } else {
-                throw new Error(`Session ${routeParams.sessionId} not found in sessions list`);
-              }
+          const sessionsResponse = await api.get<ChatSession[]>(API_ENDPOINTS.CHAT.SESSIONS + '/all');
+          if (sessionsResponse.success && sessionsResponse.data) {
+            const sessions = Array.isArray(sessionsResponse.data) ? sessionsResponse.data : [];
+            const foundSession = sessions.find(s => s.id === routeParams.sessionId);
+            if (foundSession) {
+              chatSession = foundSession;
             } else {
-              throw new Error('Failed to load sessions from backend');
+              throw new Error(`Session ${routeParams.sessionId} not found`);
             }
-          } catch (err: any) {
-            console.error('Error loading admin session:', err);
-            throw new Error(err.message || 'Failed to load chat session');
+          } else {
+            throw new Error('Failed to load sessions');
           }
         } else {
-          // For regular users, get or create session
           chatSession = await chatService.getOrCreateSession();
         }
 
         setSession(chatSession);
-
-        // Join session room
         chatService.joinSession(chatSession.id);
-
-        // Wait a bit for join to complete
         await new Promise(resolve => setTimeout(resolve, 300));
 
-        // Load messages (gracefully handle if endpoint doesn't exist)
         try {
           const messagesData = await chatService.getMessages(chatSession.id);
           setMessages(messagesData.messages || []);
-        } catch (error: any) {
-          // If messages endpoint fails, start with empty array
-          // Messages will be received via socket events
-          console.warn('Could not load initial messages, will rely on socket events:', error.message);
+        } catch {
           setMessages([]);
         }
 
-        // Mark messages as read (gracefully handle if endpoint doesn't exist)
         try {
           await chatService.markAsRead(chatSession.id);
-        } catch (error: any) {
-          console.warn('Could not mark messages as read:', error.message);
-        }
+        } catch {}
 
         setLoading(false);
       } catch (error: any) {
-        console.error('Error initializing chat:', error);
-        // Better error message handling
-        let errorMessage = 'Failed to initialize chat. Please try again.';
-        if (error?.message) {
-          errorMessage = error.message;
-        } else if (error?.status === 404) {
-          errorMessage = 'Chat endpoint not found. Please check backend configuration.';
-        } else if (error?.status === 401) {
-          errorMessage = 'Authentication failed. Please login again.';
-        } else if (typeof error === 'string') {
-          errorMessage = error;
-        }
-        setError(errorMessage);
+        setError(error.message || 'Failed to initialize chat');
         setLoading(false);
       }
     };
 
     initializeChat();
-
-    return () => {
-      // Cleanup on unmount
-    };
   }, [token, routeParams?.sessionId, user?.role]);
 
-  // Set up socket listeners after session is created
   useEffect(() => {
     if (!session?.id) return;
 
     const unsubscribeNewMessage = chatService.onNewMessage((data) => {
       if (data.sessionId === session.id) {
         setMessages((prev) => {
-          // Remove optimistic message if exists and replace with real one
           const filtered = prev.filter((m) => !m.id.startsWith('temp-'));
-          
-          // Avoid duplicates
-          if (filtered.some((m) => m.id === data.message.id)) {
-            return filtered;
-          }
-          
+          if (filtered.some((m) => m.id === data.message.id)) return filtered;
           return [...filtered, data.message];
         });
-        
-        // Auto-scroll to bottom
-        setTimeout(() => {
-          scrollViewRef.current?.scrollToEnd({ animated: true });
-        }, 100);
+        setTimeout(() => scrollViewRef.current?.scrollToEnd({ animated: true }), 100);
       }
     });
 
@@ -226,49 +165,34 @@ const ChatScreen: React.FC = () => {
     };
   }, [session?.id, user?.id]);
 
-  // Reload messages when screen comes into focus (to catch any missed messages)
   useFocusEffect(
     useCallback(() => {
       if (!token || !session?.id) return;
 
       const reloadMessages = async () => {
         try {
-          // Ensure socket is connected
           if (!chatService.connected) {
             chatService.connect(token);
             await new Promise(resolve => setTimeout(resolve, 500));
           }
-
-          // Join session room
           chatService.joinSession(session.id);
           await new Promise(resolve => setTimeout(resolve, 300));
 
-          // Load messages (gracefully handle if endpoint doesn't exist)
           try {
             const messagesData = await chatService.getMessages(session.id);
             setMessages(messagesData.messages || []);
-          } catch (error: any) {
-            // If messages endpoint fails, keep existing messages
-            // New messages will be received via socket events
-            console.warn('Could not reload messages, keeping existing messages:', error.message);
-          }
-          
-          // Mark messages as read (gracefully handle if endpoint doesn't exist)
+          } catch {}
+
           try {
             await chatService.markAsRead(session.id);
-          } catch (error: any) {
-            console.warn('Could not mark messages as read:', error.message);
-          }
-        } catch (error: any) {
-          console.error('Error reloading messages on focus:', error);
-        }
+          } catch {}
+        } catch {}
       };
 
       reloadMessages();
     }, [token, session?.id])
   );
 
-  // Handle typing indicator
   useEffect(() => {
     if (!session?.id) return;
 
@@ -277,12 +201,8 @@ const ChatScreen: React.FC = () => {
       chatService.sendTyping(session.id, true);
     }
 
-    // Clear existing timeout
-    if (typingTimeoutRef.current) {
-      clearTimeout(typingTimeoutRef.current);
-    }
+    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
 
-    // Set new timeout to stop typing indicator
     typingTimeoutRef.current = setTimeout(() => {
       if (isTyping && session?.id) {
         setIsTyping(false);
@@ -291,9 +211,7 @@ const ChatScreen: React.FC = () => {
     }, 1000);
 
     return () => {
-      if (typingTimeoutRef.current) {
-        clearTimeout(typingTimeoutRef.current);
-      }
+      if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
     };
   }, [message, session?.id, isTyping]);
 
@@ -302,36 +220,26 @@ const ChatScreen: React.FC = () => {
 
     const messageText = message.trim();
     const imageToSend = selectedImage;
-    const localAudioUri = recordingUri; // Use stored URI
+    const localAudioUri = recordingUri;
     const recordingToSend = recording;
-    
-    // Clear input immediately
+
     setMessage('');
     setSelectedImage(null);
     setSending(true);
 
-    // Store duration if we have recording
     const audioDuration = recordingDuration;
 
     try {
       let imageUrl: string | undefined;
-      let tempAudioUrl: string | undefined; // Temporary local URI for immediate display
-      let finalAudioUrl: string | undefined; // Final Cloudinary URL
-      
-      // Upload image if selected
+      let tempAudioUrl: string | undefined;
+      let finalAudioUrl: string | undefined;
+
       if (imageToSend) {
         setUploadingImage(true);
         try {
           imageUrl = (await uploadImage(imageToSend)).url;
         } catch (uploadError: any) {
-          console.error('Error uploading image:', uploadError);
-          let errorMessage = uploadError.message || 'Failed to upload image. Please try again.';
-          
-          if (errorMessage.includes('whitelisted') || errorMessage.includes('unsigned') || errorMessage.includes('preset')) {
-            errorMessage = 'Cloudinary upload preset must be set to "Unsigned" mode. Please check CLOUDINARY_FIX.md for instructions.';
-          }
-          
-          Alert.alert('Upload Error', errorMessage);
+          Alert.alert('Upload Error', uploadError.message || 'Failed to upload image');
           setSending(false);
           setUploadingImage(false);
           setSelectedImage(imageToSend);
@@ -341,45 +249,27 @@ const ChatScreen: React.FC = () => {
         }
       }
 
-      // Handle voice note - show immediately, upload in background
       if (localAudioUri || recordingToSend) {
         let uri = localAudioUri;
-        
-        // Stop recording if still active
         if (recordingToSend && !localAudioUri) {
           try {
             uri = recordingToSend.getURI();
-            if (uri) {
-              await recordingToSend.stopAndUnloadAsync();
-            }
-          } catch (err) {
-            console.error('Error getting recording URI:', err);
-          }
+            if (uri) await recordingToSend.stopAndUnloadAsync();
+          } catch {}
         }
-
-        if (uri) {
-          // Store local URI for immediate display (WhatsApp style)
-          tempAudioUrl = uri;
-          
-          // Store duration - will be used when creating the message
-          // Duration will be stored with the message ID after message is created
-        }
-
-        // Clean up recording state
+        if (uri) tempAudioUrl = uri;
         setRecording(null);
         setRecordingUri(null);
         setRecordingDuration(0);
       }
 
-      // Create optimistic message (will be updated with final audio URL after upload)
       const senderType = user?.role === 'ADMIN' ? 'ADMIN' : 'USER';
       const tempMessageId = `temp-${Date.now()}`;
-      
-      // Store duration for this message
+
       if (audioDuration > 0 && tempAudioUrl) {
         setAudioDurations((prev) => ({ ...prev, [tempMessageId]: audioDuration }));
       }
-      
+
       const optimisticMessage: ChatMessage = {
         id: tempMessageId,
         sessionId: session.id,
@@ -387,7 +277,7 @@ const ChatScreen: React.FC = () => {
         senderType,
         message: messageText,
         imageUrl: imageUrl || null,
-        audioUrl: tempAudioUrl || null, // Use local URI for immediate display
+        audioUrl: tempAudioUrl || null,
         isRead: false,
         createdAt: new Date().toISOString(),
         user: user ? {
@@ -400,57 +290,34 @@ const ChatScreen: React.FC = () => {
         } : undefined,
       };
 
-      // Add message immediately to chat (optimistic UI) - only if we have something to show
       if (messageText || imageUrl || tempAudioUrl) {
         setMessages((prev) => [...prev, optimisticMessage]);
       }
 
-      // Send via socket/API - wait for audio upload if needed
       if (tempAudioUrl && !finalAudioUrl) {
-        // If we have a local audio URI, we need to upload it first before sending
-        // Show uploading state
         setUploadingAudio(tempAudioUrl);
-        
         try {
-          // Upload audio first
           const uploadResult = await uploadAudio(tempAudioUrl);
           finalAudioUrl = uploadResult.url;
-          
-          // Update message with final URL
-          setMessages((prev) => 
-            prev.map((msg) => 
-              msg.id === tempMessageId 
-                ? { ...msg, audioUrl: finalAudioUrl }
-                : msg
+          setMessages((prev) =>
+            prev.map((msg) =>
+              msg.id === tempMessageId ? { ...msg, audioUrl: finalAudioUrl } : msg
             )
           );
-          
-          // Now send via socket/API with the Cloudinary URL
           if (chatService.connected) {
             chatService.sendMessageSocket(session.id, messageText || '', imageUrl, finalAudioUrl);
           } else {
             await chatService.sendMessage(session.id, messageText || '', imageUrl, finalAudioUrl);
           }
-          
           setUploadingAudio(null);
         } catch (uploadError: any) {
-          console.error('Error uploading audio:', uploadError);
           setUploadingAudio(null);
-          
-          // Remove the optimistic message if upload fails
           setMessages((prev) => prev.filter((msg) => msg.id !== tempMessageId));
-          
-          let errorMessage = uploadError.message || 'Failed to upload voice note. Please try again.';
-          if (errorMessage.includes('whitelisted') || errorMessage.includes('unsigned') || errorMessage.includes('preset')) {
-            errorMessage = 'Cloudinary upload preset must be set to "Unsigned" mode. Please check CLOUDINARY_FIX.md for instructions.';
-          }
-          
-          Alert.alert('Upload Error', errorMessage);
+          Alert.alert('Upload Error', uploadError.message || 'Failed to upload voice note');
           setSending(false);
           return;
         }
       } else {
-        // No audio or already uploaded - send immediately
         if (chatService.connected) {
           chatService.sendMessageSocket(session.id, messageText || '', imageUrl, finalAudioUrl);
         } else {
@@ -458,19 +325,11 @@ const ChatScreen: React.FC = () => {
         }
       }
 
-      // Scroll to bottom
-      setTimeout(() => {
-        scrollViewRef.current?.scrollToEnd({ animated: true });
-      }, 100);
-
-      // Mark as read
+      setTimeout(() => scrollViewRef.current?.scrollToEnd({ animated: true }), 100);
       await chatService.markAsRead(session.id);
     } catch (error: any) {
-      console.error('Error sending message:', error);
       setMessage(messageText);
-      if (imageToSend) {
-        setSelectedImage(imageToSend);
-      }
+      if (imageToSend) setSelectedImage(imageToSend);
       if (localAudioUri) {
         setRecordingUri(localAudioUri);
         setRecordingDuration(audioDuration);
@@ -481,54 +340,78 @@ const ChatScreen: React.FC = () => {
     }
   };
 
+  const handleSendSuggestion = async (suggestionText: string) => {
+    if (!session || sending) return;
+    setSending(true);
+    const senderType = user?.role === 'ADMIN' ? 'ADMIN' : 'USER';
+    const tempMessageId = `temp-${Date.now()}`;
+    const optimisticMessage: ChatMessage = {
+      id: tempMessageId,
+      sessionId: session.id,
+      userId: user?.id || '',
+      senderType,
+      message: suggestionText,
+      imageUrl: null,
+      audioUrl: null,
+      isRead: false,
+      createdAt: new Date().toISOString(),
+      user: user ? {
+        id: user.id,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        email: user.email,
+        imageUrl: user.imageUrl,
+        role: user.role || 'CUSTOMER',
+      } : undefined,
+    };
+    setMessages((prev) => [...prev, optimisticMessage]);
+    if (chatService.connected) {
+      chatService.sendMessageSocket(session.id, suggestionText, undefined, undefined);
+    } else {
+      await chatService.sendMessage(session.id, suggestionText, undefined, undefined);
+    }
+    setSending(false);
+    setTimeout(() => scrollViewRef.current?.scrollToEnd({ animated: true }), 100);
+  };
+
   const handlePickImage = async () => {
     try {
-      // Request permission
       const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (status !== 'granted') {
         Alert.alert('Permission needed', 'Please grant camera roll permissions to send images.');
         return;
       }
-
-      // Launch image picker
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
         allowsEditing: true,
         aspect: [4, 3],
         quality: 0.8,
       });
-
       if (!result.canceled && result.assets[0]) {
         setSelectedImage(result.assets[0].uri);
       }
-    } catch (error: any) {
-      console.error('Error picking image:', error);
-      Alert.alert('Error', 'Failed to pick image. Please try again.');
+    } catch {
+      Alert.alert('Error', 'Failed to pick image.');
     }
   };
 
   const handleTakePhoto = async () => {
     try {
-      // Request permission
       const { status } = await ImagePicker.requestCameraPermissionsAsync();
       if (status !== 'granted') {
-        Alert.alert('Permission needed', 'Please grant camera permissions to take photos.');
+        Alert.alert('Permission needed', 'Please grant camera permissions.');
         return;
       }
-
-      // Launch camera
       const result = await ImagePicker.launchCameraAsync({
         allowsEditing: true,
         aspect: [4, 3],
         quality: 0.8,
       });
-
       if (!result.canceled && result.assets[0]) {
         setSelectedImage(result.assets[0].uri);
       }
-    } catch (error: any) {
-      console.error('Error taking photo:', error);
-      Alert.alert('Error', 'Failed to take photo. Please try again.');
+    } catch {
+      Alert.alert('Error', 'Failed to take photo.');
     }
   };
 
@@ -539,83 +422,55 @@ const ChatScreen: React.FC = () => {
 
   const startRecording = async () => {
     try {
-      // Request permissions
       const { status } = await Audio.requestPermissionsAsync();
       if (status !== 'granted') {
-        Alert.alert('Permission needed', 'Please grant microphone permissions to record voice notes.');
+        Alert.alert('Permission needed', 'Please grant microphone permissions.');
         return;
       }
-
-      // Set audio mode
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS: true,
-        playsInSilentModeIOS: true,
-      });
-
-      // Start recording
+      await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
       const { recording: newRecording } = await Audio.Recording.createAsync(
         Audio.RecordingOptionsPresets.HIGH_QUALITY
       );
-      
       setRecording(newRecording);
       setIsRecording(true);
       setRecordingDuration(0);
 
-      // Start waveform animation
       Animated.loop(
         Animated.sequence([
-          Animated.timing(recordingWaveformAnim, {
-            toValue: 1,
-            duration: 600,
-            useNativeDriver: false,
-          }),
-          Animated.timing(recordingWaveformAnim, {
-            toValue: 0,
-            duration: 600,
-            useNativeDriver: false,
-          }),
+          Animated.timing(recordingWaveformAnim, { toValue: 1, duration: 600, useNativeDriver: false }),
+          Animated.timing(recordingWaveformAnim, { toValue: 0, duration: 600, useNativeDriver: false }),
         ])
       ).start();
 
-      // Start timer
       recordingTimerRef.current = setInterval(() => {
         setRecordingDuration((prev) => prev + 1);
       }, 1000);
-    } catch (error: any) {
-      console.error('Error starting recording:', error);
-      Alert.alert('Error', 'Failed to start recording. Please try again.');
+    } catch {
+      Alert.alert('Error', 'Failed to start recording.');
     }
   };
 
   const stopRecording = async () => {
     if (!recording) return;
-
     try {
       if (recordingTimerRef.current) {
         clearInterval(recordingTimerRef.current);
         recordingTimerRef.current = null;
       }
-
-      // Stop waveform animation
       recordingWaveformAnim.stopAnimation();
       recordingWaveformAnim.setValue(0);
 
       const status = await recording.getStatusAsync();
       const uri = recording.getURI();
-      
       await recording.stopAndUnloadAsync();
       setIsRecording(false);
-      
-      // Store URI and duration for immediate display
+
       if (uri) {
         setRecordingUri(uri);
         const duration = status.durationMillis ? Math.floor(status.durationMillis / 1000) : recordingDuration;
         setRecordingDuration(duration);
       }
-      // Recording will be sent when user presses send button
-    } catch (error: any) {
-      console.error('Error stopping recording:', error);
-      Alert.alert('Error', 'Failed to stop recording.');
+    } catch {
       setIsRecording(false);
       setRecording(null);
       setRecordingUri(null);
@@ -625,157 +480,149 @@ const ChatScreen: React.FC = () => {
 
   const cancelRecording = async () => {
     if (!recording) return;
-
     try {
       if (recordingTimerRef.current) {
         clearInterval(recordingTimerRef.current);
         recordingTimerRef.current = null;
       }
-
-      // Stop waveform animation
       recordingWaveformAnim.stopAnimation();
       recordingWaveformAnim.setValue(0);
-
       await recording.stopAndUnloadAsync();
       setIsRecording(false);
       setRecording(null);
       setRecordingUri(null);
       setRecordingDuration(0);
-    } catch (error: any) {
-      console.error('Error canceling recording:', error);
-      // Force cleanup even if error
+    } catch {
       setIsRecording(false);
       setRecording(null);
       setRecordingUri(null);
       setRecordingDuration(0);
-      if (recordingTimerRef.current) {
-        clearInterval(recordingTimerRef.current);
-        recordingTimerRef.current = null;
-      }
     }
   };
 
-  const playAudio = async (audioUrl: string) => {
-    try {
-      // Stop current audio if playing
-      if (sound) {
-        await sound.unloadAsync();
-        setSound(null);
+  const stopCurrentAudio = async () => {
+    if (soundRef.current) {
+      try {
+        await soundRef.current.stopAsync();
+        await soundRef.current.unloadAsync();
+      } catch (e) {
+        // Ignore errors when stopping
       }
+      soundRef.current = null;
+    }
+    isPlayingRef.current = false;
+    waveformAnim.stopAnimation();
+    waveformAnim.setValue(0);
+  };
 
+  const playAudio = async (audioUrl: string) => {
+    // Prevent multiple simultaneous play attempts
+    if (isPlayingRef.current) {
+      return;
+    }
+
+    try {
+      // Stop any current sound first
+      await stopCurrentAudio();
+
+      // Toggle off if same audio was playing
       if (playingAudio === audioUrl) {
-        // If same audio is playing, stop it
         setPlayingAudio(null);
-        waveformAnim.stopAnimation();
-        waveformAnim.setValue(0);
+        setAudioPositions((prev) => ({ ...prev, [audioUrl]: 0 }));
         return;
       }
 
-      // Load and play new audio (works with both local URIs and remote URLs)
+      isPlayingRef.current = true;
+
+      // Set audio mode for playback (important for iOS)
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: false,
+        playsInSilentModeIOS: true,
+        staysActiveInBackground: false,
+        shouldDuckAndroid: true,
+      });
+
+      // Create and play sound
       const { sound: newSound } = await Audio.Sound.createAsync(
         { uri: audioUrl },
-        { shouldPlay: true }
+        { shouldPlay: true, progressUpdateIntervalMillis: 200 }
       );
 
-      setSound(newSound);
+      soundRef.current = newSound;
       setPlayingAudio(audioUrl);
+      setAudioPositions((prev) => ({ ...prev, [audioUrl]: 0 }));
 
       // Start waveform animation
       Animated.loop(
         Animated.sequence([
-          Animated.timing(waveformAnim, {
-            toValue: 1,
-            duration: 500,
-            useNativeDriver: false,
-          }),
-          Animated.timing(waveformAnim, {
-            toValue: 0,
-            duration: 500,
-            useNativeDriver: false,
-          }),
+          Animated.timing(waveformAnim, { toValue: 1, duration: 500, useNativeDriver: false }),
+          Animated.timing(waveformAnim, { toValue: 0, duration: 500, useNativeDriver: false }),
         ])
       ).start();
 
-      // Get duration if not already stored
-      const status = await newSound.getStatusAsync();
-      if (status.isLoaded && status.durationMillis) {
-        const duration = Math.floor(status.durationMillis / 1000);
-        setAudioDurations((prev) => ({ ...prev, [audioUrl]: duration }));
-      }
-
-      // Handle playback finish
+      // Set up playback status updates
       newSound.setOnPlaybackStatusUpdate((status) => {
-        if (status.isLoaded && status.didJustFinish) {
-          setPlayingAudio(null);
-          setSound(null);
-          waveformAnim.stopAnimation();
-          waveformAnim.setValue(0);
+        if (status.isLoaded) {
+          // Update duration if not set
+          if (status.durationMillis) {
+            setAudioDurations((prev) => {
+              if (prev[audioUrl]) return prev;
+              return { ...prev, [audioUrl]: Math.floor(status.durationMillis! / 1000) };
+            });
+          }
+
+          // Update current position
+          if (status.positionMillis !== undefined) {
+            setAudioPositions((prev) => ({ ...prev, [audioUrl]: Math.floor(status.positionMillis / 1000) }));
+          }
+
+          // Handle playback finished
+          if (status.didJustFinish) {
+            soundRef.current = null;
+            isPlayingRef.current = false;
+            setPlayingAudio(null);
+            setAudioPositions((prev) => ({ ...prev, [audioUrl]: 0 }));
+            waveformAnim.stopAnimation();
+            waveformAnim.setValue(0);
+          }
         }
       });
-    } catch (error: any) {
-      console.error('Error playing audio:', error);
-      Alert.alert('Error', 'Failed to play voice note.');
+    } catch (error) {
+      console.warn('Audio playback error:', error);
+      await stopCurrentAudio();
       setPlayingAudio(null);
-      waveformAnim.stopAnimation();
-      waveformAnim.setValue(0);
     }
   };
 
-  // Format duration helper
   const formatDuration = (seconds: number): string => {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
-  // Cleanup on unmount
   useEffect(() => {
     return () => {
-      if (recording) {
-        recording.stopAndUnloadAsync();
+      if (recording) recording.stopAndUnloadAsync();
+      if (soundRef.current) {
+        soundRef.current.stopAsync().catch(() => {});
+        soundRef.current.unloadAsync().catch(() => {});
       }
-      if (sound) {
-        sound.unloadAsync();
-      }
-      if (recordingTimerRef.current) {
-        clearInterval(recordingTimerRef.current);
-      }
+      if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
     };
   }, []);
 
-  // Common emojis
   const commonEmojis = ['😀', '😃', '😄', '😁', '😆', '😅', '😂', '🤣', '😊', '😇', '🙂', '🙃', '😉', '😌', '😍', '🥰', '😘', '😗', '😙', '😚', '😋', '😛', '😝', '😜', '🤪', '🤨', '🧐', '🤓', '😎', '🤩', '🥳', '😏', '😒', '😞', '😔', '😟', '😕', '🙁', '😣', '😖', '😫', '😩', '🥺', '😢', '😭', '😤', '😠', '😡', '🤬', '🤯', '😳', '🥵', '🥶', '😱', '😨', '😰', '😥', '😓', '🤗', '🤔', '🤭', '🤫', '🤥', '😶', '😐', '😑', '😬', '🙄', '😯', '😦', '😧', '😮', '😲', '🥱', '😴', '🤤', '😪', '😵', '🤐', '🥴', '🤢', '🤮', '🤧', '😷', '🤒', '🤕', '🤑', '🤠', '😈', '👿', '👹', '👺', '🤡', '💩', '👻', '💀', '☠️', '👽', '👾', '🤖', '🎃', '😺', '😸', '😹', '😻', '😼', '😽', '🙀', '😿', '😾'];
 
-  const handleBack = () => {
-    navigation.goBack();
-  };
-
-
-  const getSenderName = (msg: ChatMessage) => {
-    if (msg.senderType === 'USER') {
-      return msg.user?.firstName && msg.user?.lastName
-        ? `${msg.user.firstName} ${msg.user.lastName}`
-        : msg.user?.email || 'You';
-    } else if (msg.senderType === 'ADMIN') {
-      return msg.user?.firstName && msg.user?.lastName
-        ? `${msg.user.firstName} ${msg.user.lastName}`
-        : 'Business Product Expert';
-    }
-    return 'System';
-  };
+  const handleBack = () => navigation.goBack();
 
   const isUserMessage = (msg: ChatMessage) => {
-    // For regular users: show their own messages on the right
-    // For admins: show admin messages on the right, user messages on the left
-    if (user?.role === 'ADMIN') {
-      return msg.senderType === 'ADMIN';
-    }
+    if (user?.role === 'ADMIN') return msg.senderType === 'ADMIN';
     return msg.senderType === 'USER' && msg.userId === user?.id;
   };
 
   if (loading) {
     return (
-      <SafeAreaView style={styles.root} edges={['top', 'bottom']}>
+      <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color={colors.accent} />
           <Text style={styles.loadingText}>Loading chat...</Text>
@@ -786,49 +633,20 @@ const ChatScreen: React.FC = () => {
 
   if (error && !session) {
     return (
-      <SafeAreaView style={styles.root} edges={['top', 'bottom']}>
+      <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
         <View style={styles.header}>
-          <View style={styles.headerLeft}>
-            <TouchableOpacity onPress={handleBack}>
-              <Ionicons name="arrow-back" size={24} color={colors.textPrimary} />
-            </TouchableOpacity>
-          </View>
+          <TouchableOpacity onPress={handleBack} style={styles.backBtn}>
+            <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
+          </TouchableOpacity>
+          <Text style={styles.headerTitle}>Chat</Text>
+          <View style={{ width: 40 }} />
         </View>
         <View style={styles.errorContainer}>
           <Ionicons name="alert-circle" size={48} color={colors.danger} />
           <Text style={styles.errorTitle}>Unable to Load Chat</Text>
           <Text style={styles.errorText}>{error}</Text>
-          <TouchableOpacity
-            style={styles.retryButton}
-            onPress={() => {
-              setError(null);
-              setLoading(true);
-              // Re-initialize chat
-              if (token) {
-                chatService.connect(token);
-                chatService.getOrCreateSession()
-                  .then((chatSession) => {
-                    setSession(chatSession);
-                    chatService.joinSession(chatSession.id);
-                    return chatService.getMessages(chatSession.id);
-                  })
-                  .then((messagesData) => {
-                    setMessages(messagesData.messages || []);
-                    if (session) {
-                      chatService.markAsRead(session.id);
-                    }
-                    setLoading(false);
-                    setError(null);
-                  })
-                  .catch((err) => {
-                    console.error('Retry error:', err);
-                    setError(err.message || 'Failed to load chat');
-                    setLoading(false);
-                  });
-              }
-            }}
-          >
-            <Text style={styles.retryButtonText}>Retry</Text>
+          <TouchableOpacity style={styles.retryBtn} onPress={() => { setError(null); setLoading(true); }}>
+            <Text style={styles.retryBtnText}>Retry</Text>
           </TouchableOpacity>
         </View>
       </SafeAreaView>
@@ -836,569 +654,258 @@ const ChatScreen: React.FC = () => {
   }
 
   return (
-    <SafeAreaView style={styles.root} edges={['top', 'bottom']}>
+    <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
       <KeyboardAvoidingView
-        style={styles.container}
+        style={styles.flex1}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
       >
         {/* Header */}
         <View style={styles.header}>
-          <View style={styles.headerLeft}>
-            <TouchableOpacity onPress={handleBack}>
-              <Ionicons name="arrow-back" size={24} color={colors.textPrimary} />
-            </TouchableOpacity>
-            {user?.role === 'ADMIN' && session?.user && (
-              <View style={styles.headerUserInfo}>
-                <Text style={styles.headerUserName}>
-                  {session.user.firstName && session.user.lastName
-                    ? `${session.user.firstName} ${session.user.lastName}`
-                    : session.user.email || 'User'}
-                </Text>
-                <Text style={styles.headerUserEmail}>{session.user.email}</Text>
-              </View>
-            )}
-            {user?.role !== 'ADMIN' && (
-              <TouchableOpacity style={styles.headerIconButton}>
-                <Ionicons name="ellipsis-horizontal" size={24} color={colors.textPrimary} />
-              </TouchableOpacity>
-            )}
+          <TouchableOpacity onPress={handleBack} style={styles.backBtn}>
+            <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
+          </TouchableOpacity>
+          <View style={styles.headerInfo}>
+            <Text style={styles.headerTitle}>
+              {user?.role === 'ADMIN' && session?.user
+                ? `${session.user.firstName || ''} ${session.user.lastName || ''}`.trim() || session.user.email
+                : 'Support Chat'}
+            </Text>
+            {otherUserTyping && <Text style={styles.typingIndicator}>typing...</Text>}
           </View>
-          {user?.role !== 'ADMIN' && (
-            <TouchableOpacity style={styles.headerIconButton}>
-              <Ionicons name="remove" size={24} color={colors.textPrimary} />
-            </TouchableOpacity>
-          )}
+          <View style={{ width: 40 }} />
         </View>
 
         {/* Messages */}
         <ImageBackground
-          source={{ uri: 'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRg6RV7_V-LbOSRc1HKqETGFInS-y3tHI24rA&s' }}
-          style={styles.messagesContainer}
-          imageStyle={styles.backgroundImage}
-          resizeMode="repeat"
+          source={{ uri: 'https://i.pinimg.com/originals/97/c0/07/97c00759d90d786d9b6096e6e0e2e69b.jpg' }}
+          style={styles.messagesArea}
+          imageStyle={{ opacity: 0.15 }}
+          resizeMode="cover"
         >
           <ScrollView
             ref={scrollViewRef}
-            style={styles.messagesScrollView}
-            contentContainerStyle={styles.messagesContent}
+            style={styles.scrollView}
+            contentContainerStyle={styles.scrollContent}
             showsVerticalScrollIndicator={false}
-            onContentSizeChange={() => {
-              scrollViewRef.current?.scrollToEnd({ animated: true });
-            }}
+            onContentSizeChange={() => scrollViewRef.current?.scrollToEnd({ animated: true })}
           >
-          {messages.length === 0 && (
-            <View style={styles.emptyState}>
-              {/* Animated Chat Icon */}
-              <Animated.View
-                style={[
-                  styles.emptyIconContainer,
-                  {
-                    transform: [
-                      {
-                        scale: iconAnim.interpolate({
-                          inputRange: [0, 1],
-                          outputRange: [1, 1.1],
-                        }),
-                      },
-                    ],
-                  },
-                ]}
-              >
-                <View style={styles.chatIconWrapper}>
-                  <Ionicons name="chatbubbles" size={80} color={colors.accent} />
-                </View>
-              </Animated.View>
-
-              {/* Welcome Message */}
-              <Text style={styles.emptyTitle}>Welcome to Chat! 👋</Text>
-              <Text style={styles.emptySubtitle}>
-                We're here to help you with any questions or concerns
-              </Text>
-
-              {/* Quick Suggestions */}
-              <View style={styles.suggestionsContainer}>
-                <Text style={styles.suggestionsTitle}>Try asking:</Text>
-                <View style={styles.suggestionsList}>
-                  <TouchableOpacity
-                    style={styles.suggestionChip}
-                    onPress={() => setMessage("Hello! I need help")}
-                  >
-                    <Ionicons name="help-circle-outline" size={16} color={colors.accent} />
-                    <Text style={styles.suggestionText}>I need help</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={styles.suggestionChip}
-                    onPress={() => setMessage("What are your trading fees?")}
-                  >
-                    <Ionicons name="information-circle-outline" size={16} color={colors.accent} />
-                    <Text style={styles.suggestionText}>Trading fees</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={styles.suggestionChip}
-                    onPress={() => setMessage("How do I deposit funds?")}
-                  >
-                    <Ionicons name="wallet-outline" size={16} color={colors.accent} />
-                    <Text style={styles.suggestionText}>Deposit funds</Text>
-                  </TouchableOpacity>
+            {messages.length === 0 && (
+              <View style={styles.emptyState}>
+                <Animated.View style={[styles.emptyIcon, { transform: [{ scale: iconAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 1.1] }) }] }]}>
+                  <Ionicons name="chatbubbles" size={60} color={colors.accent} />
+                </Animated.View>
+                <Text style={styles.emptyTitle}>Start a Conversation</Text>
+                <Text style={styles.emptySubtitle}>We're here to help you</Text>
+                <View style={styles.suggestions}>
+                  {['Hello! I need help', 'What are your trading fees?', 'How do I deposit funds?'].map((text, i) => (
+                    <TouchableOpacity key={i} style={styles.suggestionChip} onPress={() => handleSendSuggestion(text)} activeOpacity={0.7}>
+                      <Text style={styles.suggestionText}>{text}</Text>
+                    </TouchableOpacity>
+                  ))}
                 </View>
               </View>
+            )}
 
-              {/* Decorative Elements */}
-              <View style={styles.decorativeDots}>
-                <View style={[styles.dot, styles.dot1]} />
-                <View style={[styles.dot, styles.dot2]} />
-                <View style={[styles.dot, styles.dot3]} />
-              </View>
-            </View>
-          )}
+            {messages.map((msg) => {
+              const isUser = isUserMessage(msg);
+              const isSending = msg.id.startsWith('temp-');
+              const isRead = msg.isRead;
 
-          {messages.map((msg) => {
-            const isUser = isUserMessage(msg);
-            const senderName = getSenderName(msg);
+              return (
+                <View key={msg.id} style={isUser ? styles.sentRow : styles.receivedRow}>
+                  <View style={isUser ? styles.sentBubble : styles.receivedBubble}>
+                    {/* Image */}
+                    {msg.imageUrl && (
+                      <TouchableOpacity onPress={() => setViewingImage(msg.imageUrl)} activeOpacity={0.9}>
+                        <Image source={{ uri: msg.imageUrl }} style={styles.msgImage} resizeMode="cover" />
+                      </TouchableOpacity>
+                    )}
 
-            return (
-              <View key={msg.id} style={styles.messageWrapper}>
-                {!isUser && (
-                  <View style={styles.messageHeader}>
-                    <View style={styles.agentIconContainer}>
-                      <View style={styles.blueIconCircle}>
-                        <Ionicons name="chatbubble" size={20} color="#FFFFFF" />
+                    {/* Voice Note */}
+                    {msg.audioUrl && (
+                      <View style={styles.voiceNote}>
+                        <TouchableOpacity style={styles.playBtn} onPress={() => playAudio(msg.audioUrl!)} activeOpacity={0.8}>
+                          <Ionicons name={playingAudio === msg.audioUrl ? 'pause' : 'play'} size={22} color="#FFFFFF" />
+                        </TouchableOpacity>
+                        <View style={styles.waveformContainer}>
+                          {[5, 12, 8, 18, 10, 15, 7, 20, 12, 16, 9, 14, 6, 18, 11, 15, 8, 12].map((h, i) => (
+                            <Animated.View
+                              key={i}
+                              style={[
+                                styles.waveBar,
+                                isUser ? styles.waveBarSent : styles.waveBarRecv,
+                                { height: playingAudio === msg.audioUrl ? waveformAnim.interpolate({ inputRange: [0, 1], outputRange: [h, h + 5] }) : h },
+                              ]}
+                            />
+                          ))}
+                        </View>
+                        <Text style={isUser ? styles.durationSent : styles.durationRecv}>
+                          {playingAudio === msg.audioUrl
+                            ? `${formatDuration(audioPositions[msg.audioUrl] || 0)} / ${formatDuration(audioDurations[msg.audioUrl] || 0)}`
+                            : formatDuration(audioDurations[msg.audioUrl] || 0)}
+                        </Text>
+                        {uploadingAudio === msg.audioUrl && <ActivityIndicator size="small" color="#8696A0" />}
                       </View>
-                      <View style={styles.agentIconCircle}>
-                        <Text style={styles.agentIconText}>DB</Text>
-                      </View>
-                    </View>
-                    <View style={styles.messageBubble}>
-                      {/* Only show sender name for admin viewing user messages */}
-                      {user?.role === 'ADMIN' && (
-                        <Text style={styles.messageSender}>{senderName}</Text>
-                      )}
-                      {msg.imageUrl && (
-                        <Image
-                          source={{ uri: msg.imageUrl }}
-                          style={styles.messageImage}
-                          resizeMode="cover"
-                        />
-                      )}
-                      {msg.audioUrl && (
-                        <View style={styles.voiceNoteWrapper}>
-                          <TouchableOpacity
-                            style={styles.voiceNoteContainer}
-                            onPress={() => playAudio(msg.audioUrl!)}
-                            activeOpacity={0.7}
-                          >
-                            <View style={styles.voiceNotePlayButton}>
-                              <Ionicons
-                                name={playingAudio === msg.audioUrl ? 'pause' : 'play'}
-                                size={18}
-                                color="#25D366"
-                              />
-                            </View>
-                            <View style={styles.voiceNoteContent}>
-                              <View style={styles.voiceNoteWaveform}>
-                                {[20, 28, 18, 32, 22, 26, 20, 30].map((height, index) => {
-                                  const isPlaying = playingAudio === msg.audioUrl;
-                                  
-                                  if (isPlaying) {
-                                    const animatedHeight = waveformAnim.interpolate({
-                                      inputRange: [0, 1],
-                                      outputRange: [height, height + 8],
-                                    });
-                                    const animatedOpacity = waveformAnim.interpolate({
-                                      inputRange: [0, 1],
-                                      outputRange: [0.4, 0.9],
-                                    });
-                                    
-                                    return (
-                                      <Animated.View
-                                        key={index}
-                                        style={[
-                                          styles.waveformBar,
-                                          {
-                                            height: animatedHeight,
-                                            opacity: animatedOpacity,
-                                          },
-                                        ]}
-                                      />
-                                    );
-                                  }
-                                  
-                                  return (
-                                    <View
-                                      key={index}
-                                      style={[
-                                        styles.waveformBar,
-                                        {
-                                          height: height,
-                                          opacity: 0.4,
-                                        },
-                                      ]}
-                                    />
-                                  );
-                                })}
-                              </View>
-                              <View style={styles.voiceNoteInfo}>
-                                <Text style={styles.voiceNoteDuration}>
-                                  {formatDuration(audioDurations[msg.audioUrl] || 0)}
-                                </Text>
-                                {uploadingAudio === msg.audioUrl && (
-                                  <View style={styles.uploadingIndicator}>
-                                    <ActivityIndicator size="small" color="#667781" />
-                                  </View>
-                                )}
-                              </View>
-                            </View>
-                          </TouchableOpacity>
+                    )}
+
+                    {/* Text */}
+                    {msg.message && <Text style={isUser ? styles.sentText : styles.receivedText}>{msg.message}</Text>}
+
+                    {/* Time & Ticks */}
+                    <View style={styles.msgMeta}>
+                      <Text style={isUser ? styles.timeSent : styles.timeRecv}>{formatTime(msg.createdAt)}</Text>
+                      {isUser && (
+                        <View style={styles.ticks}>
+                          {isSending ? (
+                            <Ionicons name="time-outline" size={14} color="rgba(255,255,255,0.6)" />
+                          ) : isRead ? (
+                            <Ionicons name="checkmark-done" size={16} color="#53BDEB" />
+                          ) : (
+                            <Ionicons name="checkmark-done" size={16} color="rgba(255,255,255,0.6)" />
+                          )}
                         </View>
                       )}
-                      {msg.message && (
-                        <Text style={styles.messageText}>{msg.message}</Text>
-                      )}
-                      <View style={styles.messageTimeContainer}>
-                        <Text style={styles.messageTime}>{formatTime(msg.createdAt)}</Text>
-                      </View>
                     </View>
-                  </View>
-                )}
-                {isUser && (
-                  <View style={styles.userMessageWrapper}>
-                    <View style={styles.userMessageBubble}>
-                      {msg.imageUrl && (
-                        <Image
-                          source={{ uri: msg.imageUrl }}
-                          style={styles.messageImage}
-                          resizeMode="cover"
-                        />
-                      )}
-                      {msg.audioUrl && (
-                        <View style={styles.voiceNoteWrapperUser}>
-                          <TouchableOpacity
-                            style={styles.voiceNoteContainerUser}
-                            onPress={() => playAudio(msg.audioUrl!)}
-                            activeOpacity={0.7}
-                          >
-                            <View style={styles.voiceNotePlayButtonUser}>
-                              <Ionicons
-                                name={playingAudio === msg.audioUrl ? 'pause' : 'play'}
-                                size={18}
-                                color="#25D366"
-                              />
-                            </View>
-                            <View style={styles.voiceNoteContent}>
-                              <View style={styles.voiceNoteWaveform}>
-                                {[20, 28, 18, 32, 22, 26, 20, 30].map((height, index) => {
-                                  const isPlaying = playingAudio === msg.audioUrl;
-                                  
-                                  if (isPlaying) {
-                                    const animatedHeight = waveformAnim.interpolate({
-                                      inputRange: [0, 1],
-                                      outputRange: [height, height + 8],
-                                    });
-                                    const animatedOpacity = waveformAnim.interpolate({
-                                      inputRange: [0, 1],
-                                      outputRange: [0.4, 0.9],
-                                    });
-                                    
-                                    return (
-                                      <Animated.View
-                                        key={index}
-                                        style={[
-                                          styles.waveformBarUser,
-                                          {
-                                            height: animatedHeight,
-                                            opacity: animatedOpacity,
-                                          },
-                                        ]}
-                                      />
-                                    );
-                                  }
-                                  
-                                  return (
-                                    <View
-                                      key={index}
-                                      style={[
-                                        styles.waveformBarUser,
-                                        {
-                                          height: height,
-                                          opacity: 0.4,
-                                        },
-                                      ]}
-                                    />
-                                  );
-                                })}
-                              </View>
-                              <View style={styles.voiceNoteInfo}>
-                                <Text style={styles.voiceNoteDurationUser}>
-                                  {formatDuration(audioDurations[msg.audioUrl] || 0)}
-                                </Text>
-                                {uploadingAudio === msg.audioUrl && (
-                                  <View style={styles.uploadingIndicator}>
-                                    <ActivityIndicator size="small" color="#667781" />
-                                  </View>
-                                )}
-                              </View>
-                            </View>
-                          </TouchableOpacity>
-                        </View>
-                      )}
-                      {msg.message && (
-                        <Text style={styles.userMessageText}>{msg.message}</Text>
-                      )}
-                      <View style={styles.messageTimeContainer}>
-                        <Text style={styles.userMessageTime}>{formatTime(msg.createdAt)}</Text>
-                      </View>
-                    </View>
-                  </View>
-                )}
-              </View>
-            );
-          })}
-
-          {otherUserTyping && (
-            <View style={styles.messageWrapper}>
-              <View style={styles.messageHeader}>
-                <View style={styles.agentIconContainer}>
-                  <View style={styles.blueIconCircle}>
-                    <Ionicons name="chatbubble" size={20} color="#FFFFFF" />
-                  </View>
-                  <View style={styles.agentIconCircle}>
-                    <Text style={styles.agentIconText}>DB</Text>
                   </View>
                 </View>
+              );
+            })}
+
+            {otherUserTyping && (
+              <View style={styles.receivedRow}>
                 <View style={styles.typingBubble}>
                   <View style={styles.typingDots}>
-                    <View style={[styles.typingDot, styles.typingDot1]} />
-                    <View style={[styles.typingDot, styles.typingDot2]} />
-                    <View style={[styles.typingDot, styles.typingDot3]} />
+                    <View style={[styles.dot, { opacity: 0.4 }]} />
+                    <View style={[styles.dot, { opacity: 0.6 }]} />
+                    <View style={[styles.dot, { opacity: 0.8 }]} />
                   </View>
                 </View>
               </View>
-            </View>
-          )}
+            )}
           </ScrollView>
         </ImageBackground>
 
-        {/* Selected Image Preview */}
+        {/* Image Preview */}
         {selectedImage && (
-          <View style={styles.imagePreviewContainer}>
-            <Image source={{ uri: selectedImage }} style={styles.imagePreview} resizeMode="cover" />
-            <TouchableOpacity
-              style={styles.removeImageButton}
-              onPress={() => setSelectedImage(null)}
-            >
-              <Ionicons name="close-circle" size={24} color={colors.danger} />
+          <View style={styles.imagePreview}>
+            <Image source={{ uri: selectedImage }} style={styles.previewImg} resizeMode="cover" />
+            <TouchableOpacity style={styles.removeImgBtn} onPress={() => setSelectedImage(null)}>
+              <Ionicons name="close-circle" size={28} color="#FF3B30" />
             </TouchableOpacity>
           </View>
         )}
 
-        {/* Recording Indicator */}
+        {/* Recording UI */}
         {isRecording && (
-          <View style={styles.recordingContainer}>
-            <View style={styles.recordingContent}>
-              <View style={styles.recordingIndicator}>
-                <View style={styles.recordingDot} />
-                <Text style={styles.recordingText}>
-                  {Math.floor(recordingDuration / 60)}:{(recordingDuration % 60).toString().padStart(2, '0')}
-                </Text>
-              </View>
-              <TouchableOpacity
-                style={styles.cancelRecordingButton}
-                onPress={cancelRecording}
-              >
-                <Ionicons name="close" size={20} color={colors.danger} />
-              </TouchableOpacity>
+          <View style={styles.recordingBar}>
+            <View style={styles.recordingDot} />
+            <Text style={styles.recordingTime}>{formatDuration(recordingDuration)}</Text>
+            <View style={styles.recordingWaveform}>
+              {[8, 14, 10, 18, 12, 16, 8, 20, 14, 18].map((h, i) => (
+                <Animated.View
+                  key={i}
+                  style={[styles.recWaveBar, { height: recordingWaveformAnim.interpolate({ inputRange: [0, 1], outputRange: [h, h + 6] }) }]}
+                />
+              ))}
             </View>
+            <TouchableOpacity onPress={cancelRecording} style={styles.cancelRecBtn}>
+              <Ionicons name="close" size={24} color="#FF3B30" />
+            </TouchableOpacity>
+            <TouchableOpacity onPress={stopRecording} style={styles.stopRecBtn}>
+              <Ionicons name="checkmark" size={24} color="#FFFFFF" />
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {/* Voice Preview */}
+        {recordingUri && !isRecording && (
+          <View style={styles.voicePreviewBar}>
+            <TouchableOpacity style={styles.previewPlayBtn} onPress={() => playAudio(recordingUri)} activeOpacity={0.8}>
+              <Ionicons name={playingAudio === recordingUri ? 'pause' : 'play'} size={20} color="#FFFFFF" />
+            </TouchableOpacity>
+            <Text style={styles.previewDuration}>{formatDuration(recordingDuration)}</Text>
+            <TouchableOpacity onPress={cancelRecording} style={styles.cancelPreviewBtn}>
+              <Ionicons name="trash-outline" size={20} color="#FF3B30" />
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.sendVoiceBtn, sending && { opacity: 0.5 }]}
+              onPress={handleSend}
+              disabled={sending}
+            >
+              {sending ? <ActivityIndicator size="small" color="#FFFFFF" /> : <Ionicons name="send" size={20} color="#FFFFFF" />}
+            </TouchableOpacity>
           </View>
         )}
 
         {/* Input Area */}
-        <View style={styles.inputContainer}>
-          <TouchableOpacity
-            style={styles.inputIconButton}
-            onPress={() => {
-              Alert.alert(
-                'Select Image',
-                'Choose an option',
-                [
-                  { text: 'Camera', onPress: handleTakePhoto },
-                  { text: 'Gallery', onPress: handlePickImage },
-                  { text: 'Cancel', style: 'cancel' },
-                ]
-              );
-            }}
-          >
-            <Ionicons name="image-outline" size={24} color={colors.textMuted} />
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.inputIconButton}
-            onPress={() => setShowEmojiPicker(!showEmojiPicker)}
-          >
-            <Ionicons name="happy-outline" size={24} color={colors.textMuted} />
-          </TouchableOpacity>
-          {!isRecording && !recordingUri ? (
-            <>
-              <TextInput
-                style={[styles.input, { color: colors.textPrimary }]}
-                value={message}
-                onChangeText={setMessage}
-                placeholder="Write a message..."
-                placeholderTextColor={colors.textMuted}
-                multiline
-                maxLength={5000}
-                editable={!sending}
-              />
+        {!isRecording && !recordingUri && (
+          <View style={styles.inputBar}>
+            <TouchableOpacity
+              style={styles.inputIconBtn}
+              onPress={() => Alert.alert('Select Image', 'Choose an option', [
+                { text: 'Camera', onPress: handleTakePhoto },
+                { text: 'Gallery', onPress: handlePickImage },
+                { text: 'Cancel', style: 'cancel' },
+              ])}
+            >
+              <Ionicons name="camera-outline" size={24} color="#8696A0" />
+            </TouchableOpacity>
+            <TextInput
+              style={styles.textInput}
+              value={message}
+              onChangeText={setMessage}
+              placeholder="Message..."
+              placeholderTextColor="#8696A0"
+              multiline
+              maxLength={5000}
+              editable={!sending}
+            />
+            {message.trim() || selectedImage ? (
               <TouchableOpacity
-                style={styles.inputIconButton}
-                onPress={startRecording}
-                onLongPress={startRecording}
-                delayLongPress={100}
-              >
-                <Ionicons name="mic-outline" size={24} color={colors.accent} />
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[
-                  styles.sendButton,
-                  ((!message.trim() && !selectedImage && !recordingUri) || sending) && styles.sendButtonDisabled,
-                ]}
+                style={[styles.sendBtn, (sending || uploadingImage) && { opacity: 0.5 }]}
                 onPress={handleSend}
-                disabled={(!message.trim() && !selectedImage && !recordingUri) || sending}
+                disabled={sending || uploadingImage}
               >
                 {sending || uploadingImage ? (
                   <ActivityIndicator size="small" color="#FFFFFF" />
                 ) : (
-                  <Ionicons name="arrow-up" size={20} color="#FFFFFF" />
+                  <Ionicons name="send" size={20} color="#FFFFFF" />
                 )}
               </TouchableOpacity>
-            </>
-          ) : isRecording ? (
-            <>
-              {/* WhatsApp-style recording UI */}
-              <View style={styles.whatsappRecordingContainer}>
-                <View style={styles.whatsappRecordingContent}>
-                  {/* Animated waveform */}
-                  <View style={styles.whatsappWaveform}>
-                    {[20, 28, 18, 32, 22, 26, 20, 30, 24, 28].map((height, index) => {
-                      const animatedHeight = recordingWaveformAnim.interpolate({
-                        inputRange: [0, 1],
-                        outputRange: [height, height + 10],
-                      });
-                      const animatedOpacity = recordingWaveformAnim.interpolate({
-                        inputRange: [0, 1],
-                        outputRange: [0.5, 1],
-                      });
-                      return (
-                        <Animated.View
-                          key={index}
-                          style={[
-                            styles.whatsappWaveformBar,
-                            {
-                              height: animatedHeight,
-                              opacity: animatedOpacity,
-                            },
-                          ]}
-                        />
-                      );
-                    })}
-                  </View>
-                  {/* Timer */}
-                  <Text style={styles.whatsappRecordingTimer}>
-                    {Math.floor(recordingDuration / 60)}:{(recordingDuration % 60).toString().padStart(2, '0')}
-                  </Text>
-                </View>
-              </View>
-              <TouchableOpacity
-                style={styles.whatsappCancelButton}
-                onPress={cancelRecording}
-              >
-                <Ionicons name="close" size={24} color={colors.textSecondary} />
+            ) : (
+              <TouchableOpacity style={styles.micBtn} onPress={startRecording}>
+                <Ionicons name="mic" size={24} color="#FFFFFF" />
               </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.whatsappStopButton}
-                onPress={stopRecording}
-              >
-                <Ionicons name="checkmark" size={24} color="#FFFFFF" />
-              </TouchableOpacity>
-            </>
-          ) : recordingUri ? (
-            <>
-              {/* WhatsApp-style preview bubble - tap to play */}
-              <TouchableOpacity
-                style={styles.whatsappPreviewBubble}
-                onPress={() => {
-                  // Play preview
-                  playAudio(recordingUri);
-                }}
-                activeOpacity={0.8}
-              >
-                <View style={styles.whatsappPreviewPlayButton}>
-                  <Ionicons
-                    name={playingAudio === recordingUri ? 'pause' : 'play'}
-                    size={18}
-                    color="#FFFFFF"
-                  />
-                </View>
-                <View style={styles.whatsappPreviewWaveform}>
-                  {[12, 18, 10, 22, 14, 20, 12, 24, 16, 18].map((height, index) => (
-                    <View
-                      key={index}
-                      style={[
-                        styles.whatsappPreviewWaveformBar,
-                        { height: height },
-                      ]}
-                    />
-                  ))}
-                </View>
-                <Text style={styles.whatsappPreviewDuration}>
-                  {formatDuration(recordingDuration)}
-                </Text>
-              </TouchableOpacity>
-              {/* Cancel button - smaller, less prominent */}
-              <TouchableOpacity
-                onPress={cancelRecording}
-                style={styles.whatsappPreviewCancelButton}
-              >
-                <Ionicons name="close" size={20} color={colors.textSecondary} />
-              </TouchableOpacity>
-              {/* Send button - LARGE and PROMINENT like WhatsApp */}
-              <TouchableOpacity
-                style={[styles.whatsappSendButton, sending && styles.whatsappSendButtonDisabled]}
-                onPress={handleSend}
-                disabled={sending}
-                activeOpacity={0.8}
-              >
-                {sending ? (
-                  <ActivityIndicator size="small" color="#FFFFFF" />
-                ) : (
-                  <Ionicons name="arrow-up" size={24} color="#FFFFFF" />
-                )}
-              </TouchableOpacity>
-            </>
-          ) : null}
-        </View>
+            )}
+          </View>
+        )}
+
+        {/* Image Viewer Modal */}
+        <Modal visible={!!viewingImage} transparent animationType="fade" onRequestClose={() => setViewingImage(null)}>
+          <View style={styles.imageViewerModal}>
+            <TouchableOpacity style={styles.closeImageBtn} onPress={() => setViewingImage(null)}>
+              <Ionicons name="close" size={32} color="#FFFFFF" />
+            </TouchableOpacity>
+            {viewingImage && (
+              <Image source={{ uri: viewingImage }} style={styles.fullImage} resizeMode="contain" />
+            )}
+          </View>
+        </Modal>
 
         {/* Emoji Picker Modal */}
-        <Modal
-          visible={showEmojiPicker}
-          transparent
-          animationType="slide"
-          onRequestClose={() => setShowEmojiPicker(false)}
-        >
-          <View style={styles.emojiPickerContainer}>
-            <View style={styles.emojiPickerHeader}>
-              <Text style={styles.emojiPickerTitle}>Select Emoji</Text>
+        <Modal visible={showEmojiPicker} transparent animationType="slide" onRequestClose={() => setShowEmojiPicker(false)}>
+          <View style={styles.emojiModal}>
+            <View style={styles.emojiHeader}>
+              <Text style={styles.emojiTitle}>Select Emoji</Text>
               <TouchableOpacity onPress={() => setShowEmojiPicker(false)}>
-                <Ionicons name="close" size={24} color={colors.textPrimary} />
+                <Ionicons name="close" size={24} color="#FFFFFF" />
               </TouchableOpacity>
             </View>
-            <ScrollView style={styles.emojiPickerContent}>
+            <ScrollView style={styles.emojiScroll}>
               <View style={styles.emojiGrid}>
-                {commonEmojis.map((emoji, index) => (
-                  <TouchableOpacity
-                    key={index}
-                    style={styles.emojiButton}
-                    onPress={() => handleEmojiPress(emoji)}
-                  >
+                {commonEmojis.map((emoji, i) => (
+                  <TouchableOpacity key={i} style={styles.emojiBtn} onPress={() => handleEmojiPress(emoji)}>
                     <Text style={styles.emojiText}>{emoji}</Text>
                   </TouchableOpacity>
                 ))}
@@ -1406,711 +913,120 @@ const ChatScreen: React.FC = () => {
             </ScrollView>
           </View>
         </Modal>
-
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
 };
 
 const styles = StyleSheet.create({
-  root: {
-    flex: 1,
-    backgroundColor: colors.background, // Dark theme background
-  },
-  container: {
-    flex: 1,
-  },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  loadingText: {
-    marginTop: 12,
-    color: colors.textSecondary,
-    fontSize: 14,
-  },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    backgroundColor: colors.card, // Dark theme header
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.border,
-    minHeight: 56,
-  },
-  headerLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 16,
-    flex: 1,
-  },
-  headerUserInfo: {
-    marginLeft: 8,
-  },
-  headerUserName: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: colors.textPrimary, // White text for dark theme
-  },
-  headerUserEmail: {
-    fontSize: 12,
-    color: colors.textSecondary, // Light gray for dark theme
-  },
-  headerIconButton: {
-    padding: 4,
-  },
-  messagesContainer: {
-    flex: 1,
-    width: '100%',
-    height: '100%',
-  },
-  backgroundImage: {
-    opacity: 1,
-  },
-  messagesScrollView: {
-    flex: 1,
-    backgroundColor: 'transparent',
-  },
-  messagesContent: {
-    padding: 16,
-    paddingBottom: 24,
-  },
-  emptyState: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingVertical: 60,
-    paddingHorizontal: 24,
-    position: 'relative',
-  },
-  emptyIconContainer: {
-    marginTop: 120,
-    marginBottom: 24,
-  },
-  chatIconWrapper: {
-    width: 120,
-    height: 120,
-    borderRadius: 60,
-    backgroundColor: colors.accent + '20', // Accent background for dark theme
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 3,
-    borderColor: colors.accent,
-    shadowColor: colors.accent,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.4,
-    shadowRadius: 12,
-    elevation: 6,
-  },
-  emptyTitle: {
-    fontSize: 24,
-    fontWeight: '700',
-    color: colors.textPrimary, // White text for dark theme
-    marginBottom: 8,
-    textAlign: 'center',
-  },
-  emptySubtitle: {
-    fontSize: 16,
-    color: colors.textSecondary, // Light gray for dark theme
-    textAlign: 'center',
-    marginBottom: 32,
-    paddingHorizontal: 20,
-    lineHeight: 22,
-  },
-  suggestionsContainer: {
-    width: '100%',
-    marginTop: 16,
-  },
-  suggestionsTitle: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: colors.textSecondary, // Light gray for dark theme
-    marginBottom: 12,
-    textAlign: 'center',
-  },
-  suggestionsList: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'center',
-    gap: 8,
-  },
-  suggestionChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: colors.card, // Dark card background
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    borderRadius: 20,
-    borderWidth: 1.5,
-    borderColor: colors.accent,
-    gap: 6,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.3,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-  suggestionText: {
-    fontSize: 13,
-    color: colors.accent, // Accent color for visibility on dark
-    fontWeight: '600',
-  },
-  decorativeDots: {
-    position: 'absolute',
-    bottom: 40,
-    flexDirection: 'row',
-    gap: 8,
-  },
-  dot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: colors.accent + '40',
-  },
-  dot1: {
-    opacity: 0.6,
-  },
-  dot2: {
-    opacity: 0.8,
-  },
-  dot3: {
-    opacity: 0.6,
-  },
-  messageWrapper: {
-    marginBottom: 4, // WhatsApp style - tighter spacing
-    paddingHorizontal: 8,
-  },
-  messageHeader: {
-    flexDirection: 'row',
-    alignItems: 'flex-end', // Align to bottom like WhatsApp
-    marginBottom: 2,
-  },
-  agentIconContainer: {
-    marginRight: 8, // Tighter spacing like WhatsApp
-    flexDirection: 'row',
-    alignItems: 'flex-end', // Align to bottom
-    gap: 4,
-    marginBottom: 2,
-  },
-  blueIconCircle: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: '#4A90E2',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  agentIconCircle: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: colors.accent,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  agentIconText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: colors.background,
-  },
-  messageBubble: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 8,
-    borderTopLeftRadius: 2, // WhatsApp style - small tail on left
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    paddingBottom: 6,
-    maxWidth: '75%',
-    // Minimal shadow like WhatsApp
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 1,
-    elevation: 1,
-  },
-  messageSender: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#667781', // WhatsApp gray for sender name
-    marginBottom: 4,
-  },
-  messageText: {
-    fontSize: 14.5,
-    color: '#111B21', // WhatsApp dark text
-    lineHeight: 19,
-    marginBottom: 2,
-  },
-  messageTimeContainer: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    alignItems: 'center',
-    marginTop: 4,
-    gap: 4,
-  },
-  messageTime: {
-    fontSize: 11,
-    color: '#667781', // WhatsApp gray timestamp
-  },
-  userMessageWrapper: {
-    alignItems: 'flex-end',
-    marginBottom: 2,
-    paddingHorizontal: 8,
-  },
-  userMessageBubble: {
-    backgroundColor: '#DCF8C6', // WhatsApp green for sent messages
-    borderRadius: 8,
-    borderTopRightRadius: 2, // WhatsApp style - small tail on right
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    paddingBottom: 6,
-    maxWidth: '75%',
-    // Minimal shadow like WhatsApp
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 1,
-    elevation: 1,
-  },
-  userMessageText: {
-    fontSize: 14.5,
-    color: '#111B21', // Dark text on green background (WhatsApp style)
-    lineHeight: 19,
-    marginBottom: 2,
-  },
-  userMessageTime: {
-    fontSize: 11,
-    color: '#667781', // WhatsApp gray timestamp
-  },
-  typingBubble: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    padding: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-    elevation: 2,
-  },
-  typingDots: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-  },
-  typingDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: colors.textSecondary, // Light gray dots for dark theme
-  },
-  typingDot1: {
-    opacity: 0.4,
-  },
-  typingDot2: {
-    opacity: 0.6,
-  },
-  typingDot3: {
-    opacity: 0.8,
-  },
-  inputContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    backgroundColor: colors.card, // Dark theme input container
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: colors.border,
-  },
-  inputIconButton: {
-    padding: 8,
-    marginRight: 8,
-  },
-  input: {
-    flex: 1,
-    backgroundColor: colors.background,
-    borderRadius: 20,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    maxHeight: 100,
-    fontSize: 15,
-    color: colors.textPrimary, // White text for dark theme
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  sendButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: colors.accent,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginLeft: 8,
-  },
-  sendButtonDisabled: {
-    backgroundColor: '#9E9E9E',
-    opacity: 0.5,
-  },
-  footer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 12,
-    paddingHorizontal: 24,
-    backgroundColor: colors.card, // Dark theme footer
-  },
-  footerText: {
-    fontSize: 12,
-    color: colors.textSecondary, // Light gray for dark theme
-    marginRight: 8,
-  },
-  imagePreviewContainer: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    backgroundColor: colors.card,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: colors.border,
-  },
-  imagePreview: {
-    width: 200,
-    height: 200,
-    borderRadius: 12,
-    marginBottom: 8,
-  },
-  removeImageButton: {
-    position: 'absolute',
-    top: 12,
-    right: 20,
-    backgroundColor: colors.background,
-    borderRadius: 12,
-  },
-  messageImage: {
-    width: 250,
-    height: 250,
-    borderRadius: 8,
-    marginBottom: 4,
-    marginTop: 4,
-  },
-  emojiPickerContainer: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'flex-end',
-  },
-  emojiPickerHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: 16,
-    backgroundColor: colors.card,
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-  },
-  emojiPickerTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: colors.textPrimary,
-  },
-  emojiPickerContent: {
-    backgroundColor: colors.card,
-    maxHeight: 300,
-  },
-  emojiGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    padding: 16,
-  },
-  emojiButton: {
-    width: 50,
-    height: 50,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 8,
-  },
-  emojiText: {
-    fontSize: 28,
-  },
-  liveChatLogo: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  liveChatSquare: {
-    width: 16,
-    height: 16,
-    backgroundColor: '#FF6B35',
-    borderRadius: 2,
-    marginRight: 6,
-  },
-  liveChatText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: colors.textSecondary, // Light gray for dark theme
-  },
-  errorContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 32,
-  },
-  errorTitle: {
-    fontSize: 20,
-    fontWeight: '600',
-    color: colors.textPrimary,
-    marginTop: 16,
-    marginBottom: 8,
-  },
-  errorText: {
-    fontSize: 14,
-    color: colors.textSecondary,
-    textAlign: 'center',
-    marginBottom: 24,
-  },
-  retryButton: {
-    backgroundColor: colors.accent,
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-    borderRadius: 8,
-  },
-  retryButtonText: {
-    color: colors.background,
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  recordingContainer: {
-    backgroundColor: colors.card,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderTopWidth: 1,
-    borderTopColor: colors.border,
-  },
-  recordingContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  recordingIndicator: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
-  recordingDot: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    backgroundColor: colors.danger,
-  },
-  recordingText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: colors.textPrimary,
-  },
-  cancelRecordingButton: {
-    padding: 8,
-    marginRight: 4,
-  },
-  // WhatsApp-style recording styles
-  whatsappRecordingContainer: {
-    flex: 1,
-    backgroundColor: colors.card,
-    borderRadius: 20,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    marginRight: 8,
-    minHeight: 50,
-    justifyContent: 'center',
-  },
-  whatsappRecordingContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  whatsappWaveform: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 3,
-    flex: 1,
-    height: 32,
-    justifyContent: 'center',
-  },
-  whatsappWaveformBar: {
-    width: 3,
-    backgroundColor: colors.danger,
-    borderRadius: 2,
-    minHeight: 4,
-    maxHeight: 32,
-  },
-  whatsappRecordingTimer: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: colors.textPrimary,
-    marginHorizontal: 12,
-    minWidth: 45,
-    textAlign: 'center',
-  },
-  whatsappCancelButton: {
-    padding: 10,
-    marginRight: 4,
-  },
-  whatsappStopButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: colors.danger,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 8,
-  },
-  // WhatsApp-style preview
-  whatsappPreviewBubble: {
-    flex: 1,
-    backgroundColor: '#DCF8C6', // WhatsApp green for sent
-    borderRadius: 18,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    marginRight: 8,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    minHeight: 48,
-  },
-  whatsappPreviewPlayButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: '#25D366',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  whatsappPreviewWaveform: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 2.5,
-    flex: 1,
-    height: 24,
-    justifyContent: 'center',
-  },
-  whatsappPreviewWaveformBar: {
-    width: 2.5,
-    backgroundColor: '#25D366',
-    borderRadius: 1.5,
-    minHeight: 4,
-    maxHeight: 24,
-  },
-  whatsappPreviewDuration: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#667781',
-    minWidth: 40,
-    textAlign: 'right',
-  },
-  whatsappPreviewCancelButton: {
-    padding: 8,
-    marginRight: 4,
-  },
-  whatsappSendButton: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: colors.accent,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 8,
-    shadowColor: colors.accent,
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.4,
-    shadowRadius: 5,
-    elevation: 6,
-  },
-  whatsappSendButtonDisabled: {
-    opacity: 0.6,
-  },
-  voiceNoteWrapper: {
-    marginVertical: 4,
-    marginBottom: 2,
-  },
-  voiceNoteWrapperUser: {
-    marginVertical: 4,
-    marginBottom: 2,
-  },
-  voiceNoteContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 8,
-    paddingHorizontal: 4,
-    minWidth: 200,
-    maxWidth: 280,
-  },
-  voiceNoteContainerUser: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 8,
-    paddingHorizontal: 4,
-    minWidth: 200,
-    maxWidth: 280,
-  },
-  voiceNotePlayButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: '#25D366',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 12,
-  },
-  voiceNotePlayButtonUser: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: '#25D366',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 12,
-  },
-  voiceNoteContent: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  voiceNoteWaveform: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 3,
-    flex: 1,
-    height: 32,
-  },
-  waveformBar: {
-    width: 3,
-    backgroundColor: '#25D366',
-    borderRadius: 2,
-    minHeight: 4,
-    maxHeight: 28,
-  },
-  waveformBarUser: {
-    backgroundColor: '#25D366',
-  },
-  voiceNoteInfo: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    marginLeft: 8,
-  },
-  voiceNoteDuration: {
-    fontSize: 13,
-    color: '#667781',
-    fontWeight: '500',
-    minWidth: 35,
-  },
-  voiceNoteDurationUser: {
-    fontSize: 13,
-    color: '#667781',
-    fontWeight: '500',
-    minWidth: 35,
-  },
-  uploadingIndicator: {
-    marginLeft: 4,
-  },
+  container: { flex: 1, backgroundColor: '#0B141A' },
+  flex1: { flex: 1 },
+  loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  loadingText: { marginTop: 12, color: '#8696A0', fontSize: 14 },
+  errorContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 32 },
+  errorTitle: { fontSize: 20, fontWeight: '600', color: '#FFFFFF', marginTop: 16 },
+  errorText: { fontSize: 14, color: '#8696A0', textAlign: 'center', marginTop: 8, marginBottom: 24 },
+  retryBtn: { backgroundColor: colors.accent, paddingHorizontal: 24, paddingVertical: 12, borderRadius: 8 },
+  retryBtnText: { color: '#FFFFFF', fontSize: 16, fontWeight: '600' },
+
+  // Header
+  header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 8, paddingVertical: 12, backgroundColor: '#1F2C34', borderBottomWidth: 1, borderBottomColor: '#2A3942' },
+  backBtn: { padding: 8 },
+  headerInfo: { flex: 1, marginLeft: 8 },
+  headerTitle: { fontSize: 18, fontWeight: '600', color: '#FFFFFF' },
+  typingIndicator: { fontSize: 12, color: '#00A884', marginTop: 2 },
+
+  // Messages
+  messagesArea: { flex: 1, backgroundColor: '#0B141A' },
+  scrollView: { flex: 1 },
+  scrollContent: { padding: 8, paddingBottom: 16 },
+
+  // Empty State
+  emptyState: { alignItems: 'center', paddingVertical: 60, paddingHorizontal: 24 },
+  emptyIcon: { width: 100, height: 100, borderRadius: 50, backgroundColor: 'rgba(0, 168, 132, 0.15)', alignItems: 'center', justifyContent: 'center', marginBottom: 20 },
+  emptyTitle: { fontSize: 22, fontWeight: '700', color: '#FFFFFF', marginBottom: 8 },
+  emptySubtitle: { fontSize: 15, color: '#8696A0', marginBottom: 24 },
+  suggestions: { gap: 10 },
+  suggestionChip: { backgroundColor: '#1F2C34', paddingVertical: 12, paddingHorizontal: 20, borderRadius: 20, borderWidth: 1, borderColor: '#00A884' },
+  suggestionText: { color: '#00A884', fontSize: 14, fontWeight: '500' },
+
+  // Message Rows
+  sentRow: { flexDirection: 'row', justifyContent: 'flex-end', marginVertical: 2, paddingHorizontal: 8 },
+  receivedRow: { flexDirection: 'row', justifyContent: 'flex-start', marginVertical: 2, paddingHorizontal: 8 },
+
+  // Bubbles
+  sentBubble: { backgroundColor: '#005C4B', borderRadius: 12, borderTopRightRadius: 4, padding: 8, maxWidth: '80%', minWidth: 80 },
+  receivedBubble: { backgroundColor: '#1F2C34', borderRadius: 12, borderTopLeftRadius: 4, padding: 8, maxWidth: '80%', minWidth: 80 },
+
+  // Text
+  sentText: { color: '#FFFFFF', fontSize: 15, lineHeight: 20 },
+  receivedText: { color: '#FFFFFF', fontSize: 15, lineHeight: 20 },
+
+  // Meta (time + ticks)
+  msgMeta: { flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center', marginTop: 4, gap: 4 },
+  timeSent: { fontSize: 11, color: 'rgba(255,255,255,0.6)' },
+  timeRecv: { fontSize: 11, color: '#8696A0' },
+  ticks: { marginLeft: 2 },
+
+  // Image in message
+  msgImage: { width: 220, height: 220, borderRadius: 8, marginBottom: 4 },
+
+  // Voice Note
+  voiceNote: { flexDirection: 'row', alignItems: 'center', paddingVertical: 4, gap: 8, minWidth: 200 },
+  playBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#00A884', alignItems: 'center', justifyContent: 'center' },
+  waveformContainer: { flexDirection: 'row', alignItems: 'center', gap: 2, flex: 1 },
+  waveBar: { width: 3, borderRadius: 2 },
+  waveBarSent: { backgroundColor: 'rgba(255,255,255,0.5)' },
+  waveBarRecv: { backgroundColor: '#8696A0' },
+  durationSent: { fontSize: 12, color: 'rgba(255,255,255,0.6)', minWidth: 36 },
+  durationRecv: { fontSize: 12, color: '#8696A0', minWidth: 36 },
+
+  // Typing
+  typingBubble: { backgroundColor: '#1F2C34', borderRadius: 12, padding: 12 },
+  typingDots: { flexDirection: 'row', gap: 4 },
+  dot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#8696A0' },
+
+  // Image Preview
+  imagePreview: { backgroundColor: '#1F2C34', padding: 12, borderTopWidth: 1, borderTopColor: '#2A3942' },
+  previewImg: { width: 150, height: 150, borderRadius: 12 },
+  removeImgBtn: { position: 'absolute', top: 8, right: 8 },
+
+  // Recording Bar
+  recordingBar: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#1F2C34', paddingHorizontal: 16, paddingVertical: 12, gap: 12 },
+  recordingDot: { width: 12, height: 12, borderRadius: 6, backgroundColor: '#FF3B30' },
+  recordingTime: { fontSize: 16, fontWeight: '600', color: '#FFFFFF', minWidth: 50 },
+  recordingWaveform: { flexDirection: 'row', alignItems: 'center', gap: 3, flex: 1 },
+  recWaveBar: { width: 3, backgroundColor: '#00A884', borderRadius: 2 },
+  cancelRecBtn: { padding: 8 },
+  stopRecBtn: { width: 44, height: 44, borderRadius: 22, backgroundColor: '#00A884', alignItems: 'center', justifyContent: 'center' },
+
+  // Voice Preview Bar
+  voicePreviewBar: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#1F2C34', paddingHorizontal: 16, paddingVertical: 10, gap: 12 },
+  previewPlayBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: '#00A884', alignItems: 'center', justifyContent: 'center' },
+  previewDuration: { fontSize: 14, color: '#FFFFFF', flex: 1 },
+  cancelPreviewBtn: { padding: 8 },
+  sendVoiceBtn: { width: 44, height: 44, borderRadius: 22, backgroundColor: '#00A884', alignItems: 'center', justifyContent: 'center' },
+
+  // Input Bar
+  inputBar: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#1F2C34', paddingHorizontal: 8, paddingVertical: 8, gap: 8 },
+  inputIconBtn: { padding: 8 },
+  textInput: { flex: 1, backgroundColor: '#2A3942', borderRadius: 24, paddingHorizontal: 16, paddingVertical: 10, fontSize: 16, color: '#FFFFFF', maxHeight: 100 },
+  sendBtn: { width: 44, height: 44, borderRadius: 22, backgroundColor: '#00A884', alignItems: 'center', justifyContent: 'center' },
+  micBtn: { width: 44, height: 44, borderRadius: 22, backgroundColor: '#00A884', alignItems: 'center', justifyContent: 'center' },
+
+  // Image Viewer Modal
+  imageViewerModal: { flex: 1, backgroundColor: 'rgba(0,0,0,0.95)', justifyContent: 'center', alignItems: 'center' },
+  closeImageBtn: { position: 'absolute', top: 50, right: 20, zIndex: 10, padding: 8 },
+  fullImage: { width: SCREEN_WIDTH, height: SCREEN_HEIGHT * 0.8 },
+
+  // Emoji Modal
+  emojiModal: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
+  emojiHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16, backgroundColor: '#1F2C34', borderTopLeftRadius: 20, borderTopRightRadius: 20 },
+  emojiTitle: { fontSize: 18, fontWeight: '600', color: '#FFFFFF' },
+  emojiScroll: { backgroundColor: '#1F2C34', maxHeight: 300 },
+  emojiGrid: { flexDirection: 'row', flexWrap: 'wrap', padding: 16 },
+  emojiBtn: { width: 50, height: 50, alignItems: 'center', justifyContent: 'center' },
+  emojiText: { fontSize: 28 },
 });
 
 export default ChatScreen;
