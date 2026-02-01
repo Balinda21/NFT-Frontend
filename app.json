@@ -2,6 +2,7 @@
   "expo": {
     "name": "NFT",
     "slug": "NFT-app",
+    "scheme": "com.nft.app",
     "platforms": ["ios", "android", "web"],
     "version": "1.0.0",
     "orientation": "portrait",
@@ -31,7 +32,7 @@
       "output": "single"
     },
     "plugins": [
-      "@react-native-google-signin/google-signin"
+      "expo-local-authentication"
     ],
     "extra": {
       "eas": {

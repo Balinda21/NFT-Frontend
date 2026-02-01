@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -9,7 +9,6 @@ import {
   Platform,
   ScrollView,
   ActivityIndicator,
-  Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
@@ -18,6 +17,7 @@ import { colors } from '../../theme/colors';
 import { API_ENDPOINTS } from '../../config/api';
 import { api } from '../../services/apiClient';
 import { useAuth } from '../../contexts/AuthContext';
+import { useBiometricAuth, getBiometricDisplayName, getBiometricIcon } from '../../hooks/useBiometricAuth';
 
 export default function LoginScreen() {
   const navigation = useNavigation();
@@ -30,8 +30,67 @@ export default function LoginScreen() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Biometric Auth
+  const {
+    isAvailable: biometricAvailable,
+    isEnabled: biometricEnabled,
+    biometricType,
+    isLoading: biometricLoading,
+    authenticate,
+    getStoredCredentials,
+  } = useBiometricAuth();
+
+  // Auto-trigger biometric login if enabled
+  useEffect(() => {
+    if (biometricEnabled && !biometricLoading) {
+      handleBiometricLogin();
+    }
+  }, [biometricEnabled, biometricLoading]);
+
+  const handleBiometricLogin = async () => {
+    setError(null);
+
+    try {
+      // Authenticate with biometrics
+      const authenticated = await authenticate();
+
+      if (!authenticated) {
+        return; // User cancelled or failed
+      }
+
+      // Get stored credentials
+      const credentials = await getStoredCredentials();
+
+      if (!credentials) {
+        setError('No saved credentials found. Please login with email.');
+        return;
+      }
+
+      setLoading(true);
+
+      // Verify the stored token is still valid
+      const response = await api.get(API_ENDPOINTS.AUTH.ME, {
+        headers: { Authorization: `Bearer ${credentials.token}` },
+      });
+
+      if (response.success && response.data?.user) {
+        // Token is valid, login the user
+        await login(credentials.token, response.data.user);
+      } else {
+        // Token expired, need to login with password
+        setError('Session expired. Please login with your password.');
+        setEmail(credentials.email);
+      }
+    } catch (err: any) {
+      console.error('Biometric login error:', err);
+      setError('Session expired. Please login with your password.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleEmailLogin = async () => {
-    setError(null); // Clear previous errors
+    setError(null);
 
     if (!email || !password) {
       setError('Please enter email and password');
@@ -45,7 +104,6 @@ export default function LoginScreen() {
         password,
       }, { skipAuth: true });
 
-      // Check for success - API returns status: "success" or success: true
       const isSuccess = response.status === 'success' || response.success === true;
 
       if (isSuccess && response.data) {
@@ -53,17 +111,14 @@ export default function LoginScreen() {
         const user = response.data.user;
         const refreshTokenValue = response.data.refreshToken;
 
-        // Ensure user object has all required fields
         if (!token || !user || !user.id) {
           setError('Invalid response from server');
           setLoading(false);
           return;
         }
 
-        // Call login and wait for it to complete
         try {
           await login(token, user, refreshTokenValue);
-          // Navigation will happen automatically via AuthContext state update
         } catch (loginError: any) {
           setError(loginError.message || 'Failed to save login data');
         }
@@ -71,7 +126,6 @@ export default function LoginScreen() {
         setError(response.message || 'Login failed');
       }
     } catch (error: any) {
-      // Show error message from server or fallback
       const errorMessage = error.message || 'Network error. Please check your connection.';
       setError(errorMessage);
     } finally {
@@ -80,7 +134,7 @@ export default function LoginScreen() {
   };
 
   const handleSignUp = async () => {
-    setError(null); // Clear previous errors
+    setError(null);
 
     if (!email || !password) {
       setError('Please enter email and password');
@@ -102,7 +156,6 @@ export default function LoginScreen() {
       }, { skipAuth: true });
 
       if (response.success) {
-        // After successful signup, automatically log in
         await handleEmailLogin();
       } else {
         setError(response.message || 'Sign up failed');
@@ -115,18 +168,21 @@ export default function LoginScreen() {
     }
   };
 
+  const biometricDisplayName = getBiometricDisplayName(biometricType);
+  const biometricIcon = getBiometricIcon(biometricType);
+
   return (
     <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={styles.keyboardView}
       >
-      <ScrollView 
-        contentContainerStyle={styles.scrollContent}
-        showsVerticalScrollIndicator={false}
-        keyboardShouldPersistTaps="handled"
-      >
-        <View style={styles.header}>
+        <ScrollView
+          contentContainerStyle={styles.scrollContent}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+        >
+          <View style={styles.header}>
             <View style={styles.logoBox}>
               <Text style={styles.logoText}>DB</Text>
             </View>
@@ -150,7 +206,7 @@ export default function LoginScreen() {
                 Sign Up
               </Text>
             </TouchableOpacity>
-        </View>
+          </View>
 
           {!isLogin && (
             <>
@@ -173,32 +229,32 @@ export default function LoginScreen() {
             </>
           )}
 
-            <TextInput
-              style={styles.input}
-              placeholder="Email"
+          <TextInput
+            style={styles.input}
+            placeholder="Email"
             placeholderTextColor={colors.textMuted}
-              value={email}
-              onChangeText={(text) => {
-                setEmail(text);
-                setError(null); // Clear error when user types
-              }}
-              keyboardType="email-address"
-              autoCapitalize="none"
-              autoCorrect={false}
-            />
+            value={email}
+            onChangeText={(text) => {
+              setEmail(text);
+              setError(null);
+            }}
+            keyboardType="email-address"
+            autoCapitalize="none"
+            autoCorrect={false}
+          />
 
-            <TextInput
-              style={styles.input}
-              placeholder="Password"
+          <TextInput
+            style={styles.input}
+            placeholder="Password"
             placeholderTextColor={colors.textMuted}
-              value={password}
-              onChangeText={(text) => {
-                setPassword(text);
-                setError(null); // Clear error when user types
-              }}
-              secureTextEntry
-              autoCapitalize="none"
-            />
+            value={password}
+            onChangeText={(text) => {
+              setPassword(text);
+              setError(null);
+            }}
+            secureTextEntry
+            autoCapitalize="none"
+          />
 
           {error && (
             <View style={styles.errorContainer}>
@@ -217,20 +273,43 @@ export default function LoginScreen() {
             ) : (
               <Text style={styles.buttonText}>
                 {isLogin ? 'Login' : 'Sign Up'}
-            </Text>
+              </Text>
             )}
           </TouchableOpacity>
 
-            <TouchableOpacity 
-            style={styles.googleButton}
-            onPress={() => {
-              Alert.alert('Info', 'Google login coming soon');
-            }}
-          >
-            <Ionicons name="logo-google" size={20} color={colors.textPrimary} />
-            <Text style={styles.googleButtonText}>Continue with Google</Text>
-            </TouchableOpacity>
-      </ScrollView>
+          {/* Biometric Login Button - Only show on login screen when available and enabled */}
+          {isLogin && biometricAvailable && biometricEnabled && (
+            <>
+              <View style={styles.dividerContainer}>
+                <View style={styles.divider} />
+                <Text style={styles.dividerText}>or</Text>
+                <View style={styles.divider} />
+              </View>
+
+              <TouchableOpacity
+                style={[styles.biometricButton, loading && styles.buttonDisabled]}
+                onPress={handleBiometricLogin}
+                disabled={loading}
+              >
+                <Ionicons
+                  name={biometricIcon as any}
+                  size={24}
+                  color={colors.accent}
+                />
+                <Text style={styles.biometricButtonText}>
+                  Login with {biometricDisplayName}
+                </Text>
+              </TouchableOpacity>
+            </>
+          )}
+
+          {/* Show biometric availability hint */}
+          {isLogin && biometricAvailable && !biometricEnabled && (
+            <Text style={styles.biometricHint}>
+              {biometricDisplayName} login available after first sign in
+            </Text>
+          )}
+        </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -314,7 +393,6 @@ const styles = StyleSheet.create({
     paddingVertical: 16,
     alignItems: 'center',
     marginTop: 8,
-    marginBottom: 16,
   },
   buttonDisabled: {
     opacity: 0.6,
@@ -324,7 +402,22 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
   },
-  googleButton: {
+  dividerContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginVertical: 20,
+  },
+  divider: {
+    flex: 1,
+    height: 1,
+    backgroundColor: colors.border,
+  },
+  dividerText: {
+    color: colors.textSecondary,
+    paddingHorizontal: 16,
+    fontSize: 14,
+  },
+  biometricButton: {
     flexDirection: 'row',
     backgroundColor: colors.card,
     borderRadius: 12,
@@ -332,13 +425,19 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
-    borderColor: colors.border,
-    gap: 8,
+    borderColor: colors.accent + '40',
+    gap: 12,
   },
-  googleButtonText: {
+  biometricButtonText: {
     color: colors.textPrimary,
     fontSize: 16,
     fontWeight: '500',
+  },
+  biometricHint: {
+    textAlign: 'center',
+    color: colors.textMuted,
+    fontSize: 13,
+    marginTop: 16,
   },
   errorContainer: {
     flexDirection: 'row',
@@ -359,4 +458,3 @@ const styles = StyleSheet.create({
     flex: 1,
   },
 });
-

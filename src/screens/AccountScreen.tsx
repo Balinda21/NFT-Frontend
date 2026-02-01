@@ -9,6 +9,7 @@ import {
   TextInput,
   Image,
   Alert,
+  Switch,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
@@ -18,6 +19,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { api } from '../services/apiClient';
 import { API_ENDPOINTS } from '../config/api';
 import { chatService } from '../services/chatService';
+import { useBiometricAuth, getBiometricDisplayName, getBiometricIcon } from '../hooks/useBiometricAuth';
 
 interface MenuItem {
   id: string;
@@ -26,7 +28,7 @@ interface MenuItem {
 
 const AccountScreen: React.FC = () => {
   const navigation = useNavigation();
-  const { logout, updateUserBalance } = useAuth();
+  const { logout, updateUserBalance, token, user } = useAuth();
   const [activeAction, setActiveAction] = useState<'Deposit' | 'Wire Transfer' | 'Withdraw'>('Deposit');
   const [selectedCurrency, setSelectedCurrency] = useState('USDT');
   const [showCurrencyDropdown, setShowCurrencyDropdown] = useState(false);
@@ -35,6 +37,15 @@ const AccountScreen: React.FC = () => {
   const [withdrawAmount, setWithdrawAmount] = useState('');
   const [walletAddress, setWalletAddress] = useState('');
   const [accountBalance, setAccountBalance] = useState(0);
+
+  // Biometric auth
+  const {
+    isAvailable: biometricAvailable,
+    isEnabled: biometricEnabled,
+    biometricType,
+    enableBiometric,
+    disableBiometric,
+  } = useBiometricAuth();
 
   // Fetch user balance when screen comes into focus
   useFocusEffect(
@@ -71,6 +82,41 @@ const AccountScreen: React.FC = () => {
 
   const currencies = ['USDT', 'ETH', 'BTC'];
   const walletAddressExample = '0x84f...5a1c80E1dDbFe9';
+
+  // Handle biometric toggle
+  const handleBiometricToggle = async (value: boolean) => {
+    if (value) {
+      // Enable biometric
+      if (!token || !user?.email) {
+        Alert.alert('Error', 'Please login first to enable biometric authentication.');
+        return;
+      }
+      const success = await enableBiometric(user.email, token);
+      if (success) {
+        Alert.alert('Success', `${getBiometricDisplayName(biometricType)} login enabled!`);
+      }
+    } else {
+      // Disable biometric
+      Alert.alert(
+        'Disable Biometric Login',
+        `Are you sure you want to disable ${getBiometricDisplayName(biometricType)} login?`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Disable',
+            style: 'destructive',
+            onPress: async () => {
+              await disableBiometric();
+              Alert.alert('Disabled', 'Biometric login has been disabled.');
+            },
+          },
+        ]
+      );
+    }
+  };
+
+  const biometricDisplayName = getBiometricDisplayName(biometricType);
+  const biometricIcon = getBiometricIcon(biometricType);
 
   const menuItems: MenuItem[] = [
     { id: '1', label: 'Option Order' },
@@ -209,6 +255,36 @@ const AccountScreen: React.FC = () => {
             </View>
           </View>
         </View>
+
+        {/* Security Section */}
+        {biometricAvailable && (
+          <View style={styles.securitySection}>
+            <Text style={styles.menuSectionTitle}>Security</Text>
+            <View style={styles.biometricRow}>
+              <View style={styles.biometricLeft}>
+                <View style={styles.biometricIconContainer}>
+                  <Ionicons
+                    name={biometricIcon as any}
+                    size={22}
+                    color={colors.accent}
+                  />
+                </View>
+                <View style={styles.biometricTextContainer}>
+                  <Text style={styles.biometricTitle}>{biometricDisplayName}</Text>
+                  <Text style={styles.biometricSubtitle}>
+                    Quick login with {biometricDisplayName}
+                  </Text>
+                </View>
+              </View>
+              <Switch
+                value={biometricEnabled}
+                onValueChange={handleBiometricToggle}
+                trackColor={{ false: colors.border, true: colors.accent + '60' }}
+                thumbColor={biometricEnabled ? colors.accent : colors.textMuted}
+              />
+            </View>
+          </View>
+        )}
 
         {/* Menu Items Section - Moved up for better visibility */}
         <View style={styles.menuSection}>
@@ -544,6 +620,46 @@ const styles = StyleSheet.create({
   accountCaret: {
     color: colors.textPrimary,
     fontSize: 14,
+  },
+  securitySection: {
+    marginTop: 24,
+    marginBottom: 8,
+  },
+  biometricRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: colors.card,
+    borderRadius: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+  },
+  biometricLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  biometricIconContainer: {
+    width: 40,
+    height: 40,
+    borderRadius: 10,
+    backgroundColor: colors.accent + '20',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+  },
+  biometricTextContainer: {
+    flex: 1,
+  },
+  biometricTitle: {
+    color: colors.textPrimary,
+    fontSize: 15,
+    fontWeight: '600',
+    marginBottom: 2,
+  },
+  biometricSubtitle: {
+    color: colors.textMuted,
+    fontSize: 12,
   },
   menuSection: {
     marginTop: 24,
