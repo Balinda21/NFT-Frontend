@@ -7,6 +7,7 @@ import {
   TouchableOpacity,
   TextInput,
   Modal,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -201,14 +202,17 @@ const styles = StyleSheet.create({
   root: {
     flex: 1,
     backgroundColor: colors.background,
+    ...(Platform.OS === 'web' ? { height: '100%' as any, overflow: 'hidden' as any } : {}),
   },
   container: {
     flex: 1,
+    ...(Platform.OS === 'web' ? { overflow: 'auto' as any } : {}),
   },
   scrollContent: {
     paddingTop: 16,
     paddingHorizontal: 16,
     paddingBottom: 24,
+    ...(Platform.OS === 'web' ? { minHeight: '100%' as any } : {}),
   },
   headerRow: {
     flexDirection: 'row',

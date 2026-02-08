@@ -4,6 +4,7 @@ import {
   Text,
   StyleSheet,
   TouchableOpacity,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
@@ -77,10 +78,12 @@ const ContactUsScreen: React.FC = () => {
 const styles = StyleSheet.create({
   root: {
     flex: 1,
+    ...(Platform.OS === 'web' ? { height: '100%' as any, overflow: 'hidden' as any } : {}),
   },
   container: {
     flex: 1,
     justifyContent: 'space-between',
+    ...(Platform.OS === 'web' ? { height: '100%' as any } : {}),
   },
   content: {
     flex: 1,

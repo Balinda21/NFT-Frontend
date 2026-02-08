@@ -53,6 +53,7 @@ export const API_ENDPOINTS = {
     CONTRACT: '/orders/contract',
     AI_QUANTIFICATION: '/orders/ai-quantification',
     CANCEL: (id: string) => `/orders/${id}/cancel`,
+    COMPLETE: (id: string) => `/orders/${id}/complete`,
     STATS: '/orders/stats',
   },
   // Loans

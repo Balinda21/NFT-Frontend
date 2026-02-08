@@ -10,16 +10,33 @@ import {
   Image,
   Alert,
   Switch,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
+import * as Clipboard from 'expo-clipboard';
+import * as ImagePicker from 'expo-image-picker';
 import { colors } from '../theme/colors';
 import { useAuth } from '../contexts/AuthContext';
 import { api } from '../services/apiClient';
 import { API_ENDPOINTS } from '../config/api';
 import { chatService } from '../services/chatService';
 import { useBiometricAuth, getBiometricDisplayName, getBiometricIcon } from '../hooks/useBiometricAuth';
+
+// Wallet addresses
+const WALLET_ADDRESSES: Record<string, Record<string, string>> = {
+  USDT: {
+    ERC20: '0x2760D44F65d61ba07e1E66D145D83129D4782e50',
+    TRC20: 'TAUMpB2wAj9zBszktzHWwWsUWhgrnXPzzw',
+  },
+  ETH: {
+    ERC20: '0x2760D44F65d61ba07e1E66D145D83129D4782e50',
+  },
+  BTC: {
+    BTC: 'bc1ppl97muupgydnuq4e27ylkd3l750mma8402y05h6d7d68xqzqanmq7jv8x9',
+  },
+};
 
 interface MenuItem {
   id: string;
@@ -80,8 +97,83 @@ const AccountScreen: React.FC = () => {
     };
   }, []);
 
+  const [copiedAddress, setCopiedAddress] = useState(false);
+
   const currencies = ['USDT', 'ETH', 'BTC'];
-  const walletAddressExample = '0x84f...5a1c80E1dDbFe9';
+
+  // Get the correct wallet address based on selected currency and network
+  const getWalletAddress = (): string => {
+    const currencyAddresses = WALLET_ADDRESSES[selectedCurrency];
+    if (!currencyAddresses) return '';
+    if (selectedCurrency === 'BTC') return currencyAddresses['BTC'] || '';
+    return currencyAddresses[depositNetwork] || '';
+  };
+
+  // Get available networks for selected currency
+  const getAvailableNetworks = (): string[] => {
+    if (selectedCurrency === 'BTC') return [];
+    if (selectedCurrency === 'ETH') return ['ERC20'];
+    return ['ERC20', 'TRC20'];
+  };
+
+  // Handle currency change - reset network to first available
+  const handleCurrencyChange = (currency: string) => {
+    setSelectedCurrency(currency);
+    if (currency === 'ETH') setDepositNetwork('ERC20');
+    if (currency === 'USDT') setDepositNetwork('ERC20');
+    setShowCurrencyDropdown(false);
+  };
+
+  // Copy wallet address to clipboard
+  const handleCopyAddress = async () => {
+    const address = getWalletAddress();
+    if (!address) return;
+    await Clipboard.setStringAsync(address);
+    setCopiedAddress(true);
+    setTimeout(() => setCopiedAddress(false), 2000);
+  };
+
+  // Upload deposit proof - pick image then open chat with it
+  const handleUploadProof = async () => {
+    Alert.alert('Upload Proof', 'Choose how to upload your deposit proof', [
+      {
+        text: 'Take Photo',
+        onPress: async () => {
+          const { status } = await ImagePicker.requestCameraPermissionsAsync();
+          if (status !== 'granted') {
+            Alert.alert('Permission needed', 'Please grant camera permissions.');
+            return;
+          }
+          const result = await ImagePicker.launchCameraAsync({
+            allowsEditing: true,
+            quality: 0.8,
+          });
+          if (!result.canceled && result.assets[0]) {
+            navigation.navigate('Chat' as never, { proofImage: result.assets[0].uri } as never);
+          }
+        },
+      },
+      {
+        text: 'Choose from Gallery',
+        onPress: async () => {
+          const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+          if (status !== 'granted') {
+            Alert.alert('Permission needed', 'Please grant photo library permissions.');
+            return;
+          }
+          const result = await ImagePicker.launchImageLibraryAsync({
+            mediaTypes: ImagePicker.MediaTypeOptions.Images,
+            allowsEditing: true,
+            quality: 0.8,
+          });
+          if (!result.canceled && result.assets[0]) {
+            navigation.navigate('Chat' as never, { proofImage: result.assets[0].uri } as never);
+          }
+        },
+      },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
+  };
 
   // Handle biometric toggle
   const handleBiometricToggle = async (value: boolean) => {
@@ -342,50 +434,67 @@ const AccountScreen: React.FC = () => {
               />
             </TouchableOpacity>
 
-            {/* Network Selection */}
-            <View style={styles.networkSelection}>
-              <TouchableOpacity
-                style={styles.networkOption}
-                onPress={() => setDepositNetwork('ERC20')}
-              >
-                <View style={styles.radioButton}>
-                  {depositNetwork === 'ERC20' && <View style={styles.radioButtonInner} />}
-                </View>
-                <Text style={styles.networkOptionText}>ERC20</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.networkOption}
-                onPress={() => setDepositNetwork('TRC20')}
-              >
-                <View style={styles.radioButton}>
-                  {depositNetwork === 'TRC20' && <View style={styles.radioButtonInner} />}
-                </View>
-                <Text style={styles.networkOptionText}>TRC20</Text>
-              </TouchableOpacity>
-            </View>
+            {/* Network Selection - only show for USDT and ETH */}
+            {getAvailableNetworks().length > 0 && (
+              <View style={styles.networkSelection}>
+                {getAvailableNetworks().map((network) => (
+                  <TouchableOpacity
+                    key={network}
+                    style={styles.networkOption}
+                    onPress={() => setDepositNetwork(network as 'ERC20' | 'TRC20')}
+                  >
+                    <View style={styles.radioButton}>
+                      {depositNetwork === network && <View style={styles.radioButtonInner} />}
+                    </View>
+                    <Text style={styles.networkOptionText}>{network}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
 
-            {/* QR Code */}
-            <View style={styles.qrCodeContainer}>
-              <Image
-                source={{ uri: 'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQoXgnU7FduTcy0Z7GyoXnMnCqLBwMwAXdiFw&s' }}
-                style={styles.qrCode}
-                resizeMode="contain"
-              />
-            </View>
+            {/* Currency/Network Label */}
+            {selectedCurrency === 'BTC' && (
+              <View style={styles.networkBadge}>
+                <Ionicons name="link-outline" size={14} color={colors.accent} />
+                <Text style={styles.networkBadgeText}>Bitcoin Network</Text>
+              </View>
+            )}
 
             {/* Wallet Address */}
             <View style={styles.walletAddressSection}>
-              <Text style={styles.walletAddressLabel}>Wallet Address</Text>
+              <Text style={styles.walletAddressLabel}>
+                {selectedCurrency} {selectedCurrency !== 'BTC' ? `(${depositNetwork})` : ''} Wallet Address
+              </Text>
               <View style={styles.walletAddressRow}>
-                <Text style={styles.walletAddressText}>{walletAddressExample}</Text>
-                <TouchableOpacity style={styles.copyButton}>
-                  <Text style={styles.copyButtonText}>Copy</Text>
+                <Text style={styles.walletAddressText} numberOfLines={1} ellipsizeMode="middle">
+                  {getWalletAddress()}
+                </Text>
+                <TouchableOpacity
+                  style={[styles.copyButton, copiedAddress && styles.copyButtonCopied]}
+                  onPress={handleCopyAddress}
+                >
+                  <Ionicons
+                    name={copiedAddress ? 'checkmark' : 'copy-outline'}
+                    size={14}
+                    color={copiedAddress ? '#4CAF50' : colors.background}
+                    style={{ marginRight: 4 }}
+                  />
+                  <Text style={[styles.copyButtonText, copiedAddress && styles.copyButtonTextCopied]}>
+                    {copiedAddress ? 'Copied!' : 'Copy'}
+                  </Text>
                 </TouchableOpacity>
               </View>
             </View>
 
+            {/* Full Address Display */}
+            <View style={styles.fullAddressContainer}>
+              <Text style={styles.fullAddressText} selectable>
+                {getWalletAddress()}
+              </Text>
+            </View>
+
             {/* Upload Proof Button */}
-            <TouchableOpacity style={styles.uploadProofButton}>
+            <TouchableOpacity style={styles.uploadProofButton} onPress={handleUploadProof}>
               <Text style={styles.uploadProofButtonText}>Upload Proof</Text>
             </TouchableOpacity>
 
@@ -421,7 +530,7 @@ const AccountScreen: React.FC = () => {
               </Text>
             </View>
 
-            <TouchableOpacity style={styles.uploadProofButton}>
+            <TouchableOpacity style={styles.uploadProofButton} onPress={handleUploadProof}>
               <Text style={styles.uploadProofButtonText}>Upload Proof</Text>
             </TouchableOpacity>
           </View>
@@ -541,10 +650,7 @@ const AccountScreen: React.FC = () => {
                 <TouchableOpacity
                   key={currency}
                   style={styles.dropdownItem}
-                  onPress={() => {
-                    setSelectedCurrency(currency);
-                    setShowCurrencyDropdown(false);
-                  }}
+                  onPress={() => handleCurrencyChange(currency)}
                 >
                   <View style={styles.dropdownRadio}>
                     {selectedCurrency === currency && (
@@ -566,14 +672,17 @@ const styles = StyleSheet.create({
   root: {
     flex: 1,
     backgroundColor: colors.background,
+    ...(Platform.OS === 'web' ? { height: '100%' as any, overflow: 'hidden' as any } : {}),
   },
   container: {
     flex: 1,
+    ...(Platform.OS === 'web' ? { overflow: 'auto' as any } : {}),
   },
   scrollContent: {
     paddingTop: 16,
     paddingHorizontal: 16,
     paddingBottom: 24,
+    ...(Platform.OS === 'web' ? { minHeight: '100%' as any } : {}),
   },
   headerRow: {
     flexDirection: 'row',
@@ -933,12 +1042,53 @@ const styles = StyleSheet.create({
     backgroundColor: colors.accent,
     borderRadius: 8,
     paddingVertical: 8,
-    paddingHorizontal: 16,
+    paddingHorizontal: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  copyButtonCopied: {
+    backgroundColor: 'rgba(76, 175, 80, 0.15)',
+    borderWidth: 1,
+    borderColor: 'rgba(76, 175, 80, 0.3)',
   },
   copyButtonText: {
     color: colors.background,
     fontSize: 14,
     fontWeight: '600',
+  },
+  copyButtonTextCopied: {
+    color: '#4CAF50',
+  },
+  networkBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#1C1C1C',
+    borderRadius: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    marginBottom: 16,
+    alignSelf: 'flex-start',
+  },
+  networkBadgeText: {
+    color: colors.accent,
+    fontSize: 13,
+    fontWeight: '500',
+  },
+  fullAddressContainer: {
+    backgroundColor: '#111',
+    borderRadius: 10,
+    padding: 14,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#222',
+  },
+  fullAddressText: {
+    color: colors.textSecondary,
+    fontSize: 12,
+    fontFamily: 'monospace',
+    lineHeight: 18,
+    letterSpacing: 0.3,
   },
   uploadProofButton: {
     backgroundColor: colors.accent,

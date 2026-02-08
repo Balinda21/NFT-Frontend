@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import {
   View,
   Text,
@@ -7,6 +7,9 @@ import {
   FlatList,
   TouchableOpacity,
   Image,
+  Animated,
+  Easing,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
@@ -80,6 +83,56 @@ const ETF_PAIRS: MarketPair[] = [
   { id: 'xlk', symbol: 'XLK', name: 'Technology Select', price: 198.67, change24h: 1.45, image: 'https://logo.clearbit.com/ssga.com' },
 ];
 
+// Skeleton shimmer component
+const SkeletonRow: React.FC<{ index: number }> = ({ index }) => {
+  const shimmer = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    Animated.loop(
+      Animated.timing(shimmer, {
+        toValue: 1,
+        duration: 1200,
+        easing: Easing.ease,
+        useNativeDriver: true,
+        delay: index * 80,
+      }),
+    ).start();
+  }, []);
+
+  const opacity = shimmer.interpolate({
+    inputRange: [0, 0.5, 1],
+    outputRange: [0.3, 0.6, 0.3],
+  });
+
+  return (
+    <View style={skeletonStyles.row}>
+      <View style={skeletonStyles.left}>
+        <Animated.View style={[skeletonStyles.circle, { opacity }]} />
+        <View style={skeletonStyles.textGroup}>
+          <Animated.View style={[skeletonStyles.lineShort, { opacity }]} />
+          <Animated.View style={[skeletonStyles.lineXShort, { opacity }]} />
+        </View>
+      </View>
+      <Animated.View style={[skeletonStyles.sparkline, { opacity }]} />
+      <View style={skeletonStyles.right}>
+        <Animated.View style={[skeletonStyles.lineMedium, { opacity }]} />
+        <Animated.View style={[skeletonStyles.lineXShort, { opacity, alignSelf: 'flex-end' }]} />
+      </View>
+    </View>
+  );
+};
+
+const SkeletonList: React.FC = () => (
+  <View style={skeletonStyles.container}>
+    {Array.from({ length: 8 }).map((_, i) => (
+      <React.Fragment key={i}>
+        <SkeletonRow index={i} />
+        {i < 7 && <View style={styles.rowDivider} />}
+      </React.Fragment>
+    ))}
+  </View>
+);
+
 // Dual flag component for forex pairs
 const DualFlag: React.FC<{ flag1: string; flag2: string }> = ({ flag1, flag2 }) => (
   <View style={styles.dualFlagContainer}>
@@ -97,12 +150,13 @@ const MarketScreen: React.FC = () => {
   const [activeTab, setActiveTab] = useState<TabType>('Crypto');
   const [pairs, setPairs] = useState<MarketPair[]>([]);
   const [pairHistory, setPairHistory] = useState<Record<string, number[]>>({});
-  const [isLive, setIsLive] = useState(false);
+  const [loading, setLoading] = useState(true);
 
   const tabs: TabType[] = ['Crypto', 'Futures', 'Forex', 'US stock', 'ETF'];
 
   useEffect(() => {
     const fetchCryptoData = async () => {
+      setLoading(true);
       try {
         const res = await fetch(
           'https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=bitcoin,ethereum,binancecoin,solana,cardano,polkadot,dogecoin,ripple,tron,litecoin,filecoin&price_change_percentage=24h&sparkline=true',
@@ -155,10 +209,11 @@ const MarketScreen: React.FC = () => {
             }
           });
           setPairHistory(newHistory);
-          setIsLive(true);
         }
       } catch {
-        setIsLive(false);
+        // Keep showing skeleton until data loads
+      } finally {
+        setLoading(false);
       }
     };
 
@@ -167,19 +222,19 @@ const MarketScreen: React.FC = () => {
     } else if (activeTab === 'Futures') {
       setPairs(FUTURES_PAIRS);
       setPairHistory({});
-      setIsLive(false);
+      setLoading(false);
     } else if (activeTab === 'Forex') {
       setPairs(FOREX_PAIRS);
       setPairHistory({});
-      setIsLive(false);
+      setLoading(false);
     } else if (activeTab === 'US stock') {
       setPairs(US_STOCKS);
       setPairHistory({});
-      setIsLive(false);
+      setLoading(false);
     } else if (activeTab === 'ETF') {
       setPairs(ETF_PAIRS);
       setPairHistory({});
-      setIsLive(false);
+      setLoading(false);
     }
   }, [activeTab]);
 
@@ -240,10 +295,9 @@ const MarketScreen: React.FC = () => {
               }
             });
             setPairHistory(newHistory);
-            setIsLive(true);
           }
         } catch {
-          setIsLive(false);
+          // Silently fail on refresh
         }
       };
       fetchCryptoData();
@@ -378,14 +432,18 @@ const MarketScreen: React.FC = () => {
 
         {/* Market List - wrapped in card container */}
         <View style={styles.listCard}>
-          <FlatList
-            data={pairs}
-            keyExtractor={(item) => item.id}
-            renderItem={renderPairRow}
-            ItemSeparatorComponent={() => <View style={styles.rowDivider} />}
-            showsVerticalScrollIndicator={false}
-            contentContainerStyle={styles.listContent}
-          />
+          {loading ? (
+            <SkeletonList />
+          ) : (
+            <FlatList
+              data={pairs}
+              keyExtractor={(item) => item.id}
+              renderItem={renderPairRow}
+              ItemSeparatorComponent={() => <View style={styles.rowDivider} />}
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={styles.listContent}
+            />
+          )}
         </View>
       </View>
     </SafeAreaView>
@@ -396,11 +454,13 @@ const styles = StyleSheet.create({
   root: {
     flex: 1,
     backgroundColor: colors.background,
+    ...(Platform.OS === 'web' ? { height: '100%' as any, overflow: 'hidden' as any } : {}),
   },
   container: {
     flex: 1,
     paddingTop: 16,
     paddingHorizontal: 16,
+    ...(Platform.OS === 'web' ? { height: '100%' as any, overflow: 'hidden' as any } : {}),
   },
   title: {
     fontSize: 28,
@@ -439,6 +499,7 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     marginBottom: 16,
     overflow: 'hidden',
+    ...(Platform.OS === 'web' ? { minHeight: 0 } : {}),
   },
   listContent: {
     paddingVertical: 8,
@@ -542,6 +603,64 @@ const styles = StyleSheet.create({
     height: 1,
     backgroundColor: '#2A2A2A',
     marginHorizontal: 16,
+  },
+});
+
+const skeletonStyles = StyleSheet.create({
+  container: {
+    paddingVertical: 8,
+  },
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+  },
+  left: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    minWidth: 100,
+  },
+  circle: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#2A2A2A',
+  },
+  textGroup: {
+    marginLeft: 12,
+    gap: 6,
+  },
+  lineShort: {
+    width: 70,
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: '#2A2A2A',
+  },
+  lineXShort: {
+    width: 45,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#2A2A2A',
+  },
+  sparkline: {
+    flex: 1,
+    height: 30,
+    borderRadius: 6,
+    backgroundColor: '#2A2A2A',
+    marginHorizontal: 12,
+  },
+  right: {
+    alignItems: 'flex-end',
+    minWidth: 80,
+    gap: 6,
+  },
+  lineMedium: {
+    width: 60,
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: '#2A2A2A',
   },
 });
 

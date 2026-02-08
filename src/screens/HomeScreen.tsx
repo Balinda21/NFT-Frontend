@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { View, Text, StyleSheet, ScrollView, FlatList, Image, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, FlatList, Image, TouchableOpacity, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
@@ -34,7 +34,6 @@ const HomeScreen: React.FC = () => {
   const [pairs, setPairs] = useState<PairRow[]>([]);
   const [miniAssets, setMiniAssets] = useState<MiniAsset[]>([]);
   const [loading, setLoading] = useState(false);
-  const [isLive, setIsLive] = useState(false);
   const [pairHistory, setPairHistory] = useState<Record<string, number[]>>({});
   const [accountBalance, setAccountBalance] = useState(0);
 
@@ -140,11 +139,9 @@ const HomeScreen: React.FC = () => {
             }
           });
           setPairHistory(newHistory);
-          setIsLive(true);
         }
       } catch {
         // Ignore errors, keep initial mock data
-        setIsLive(false);
       } finally {
         setLoading(false);
       }
@@ -277,10 +274,6 @@ const HomeScreen: React.FC = () => {
           </View>
         </View>
 
-        <Text style={[styles.liveBadge, { color: isLive ? colors.accent : colors.danger }]}>
-          {isLive ? 'LIVE DATA • CoinGecko' : 'OFFLINE • Using sample data'}
-        </Text>
-
         {renderTopCard()}
 
         <View style={styles.miniRow}>
@@ -337,24 +330,23 @@ const styles = StyleSheet.create({
   root: {
     flex: 1,
     backgroundColor: colors.background,
+    ...(Platform.OS === 'web' ? { height: '100%' as any, overflow: 'hidden' as any } : {}),
   },
   container: {
     flex: 1,
+    ...(Platform.OS === 'web' ? { overflow: 'auto' as any } : {}),
   },
   scrollContent: {
     paddingTop: 16,
     paddingHorizontal: 16,
     paddingBottom: 24,
+    ...(Platform.OS === 'web' ? { minHeight: '100%' as any } : {}),
   },
   headerRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: 16,
-  },
-  liveBadge: {
-    fontSize: 11,
-    marginBottom: 8,
   },
   brandRow: {
     flexDirection: 'row',

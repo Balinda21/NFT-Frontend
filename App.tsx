@@ -1,4 +1,5 @@
 import React from 'react';
+import { Platform, StyleSheet, View } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
 import { StatusBar } from 'expo-status-bar';
@@ -46,15 +47,25 @@ function RootNavigator() {
   );
 }
 
+const appStyles = StyleSheet.create({
+  root: {
+    flex: 1,
+    // On web, flex:1 needs explicit height to work properly for scrolling
+    ...(Platform.OS === 'web' ? { height: '100vh' as any, overflow: 'hidden' as any } : {}),
+  },
+});
+
 export default function App() {
   return (
-    <SafeAreaProvider>
-      <AuthProvider>
-        <CartProvider>
-          <StatusBar style="auto" />
-          <RootNavigator />
-        </CartProvider>
-      </AuthProvider>
-    </SafeAreaProvider>
+    <View style={appStyles.root}>
+      <SafeAreaProvider>
+        <AuthProvider>
+          <CartProvider>
+            <StatusBar style="auto" />
+            <RootNavigator />
+          </CartProvider>
+        </AuthProvider>
+      </SafeAreaProvider>
+    </View>
   );
 }

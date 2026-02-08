@@ -45,7 +45,7 @@ const ChatScreen: React.FC = () => {
   const navigation = useNavigation();
   const route = useRoute();
   const { token, user } = useAuth();
-  const routeParams = route.params as { sessionId?: string; userId?: string } | undefined;
+  const routeParams = route.params as { sessionId?: string; userId?: string; proofImage?: string } | undefined;
   const [session, setSession] = useState<ChatSession | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [message, setMessage] = useState('');
@@ -138,6 +138,14 @@ const ChatScreen: React.FC = () => {
 
     initializeChat();
   }, [token, routeParams?.sessionId, user?.role]);
+
+  // Auto-attach proof image if navigated from deposit screen
+  useEffect(() => {
+    if (routeParams?.proofImage && session && !loading) {
+      setSelectedImage(routeParams.proofImage);
+      setMessage('Deposit proof');
+    }
+  }, [routeParams?.proofImage, session, loading]);
 
   useEffect(() => {
     if (!session?.id) return;
@@ -657,7 +665,7 @@ const ChatScreen: React.FC = () => {
     <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
       <KeyboardAvoidingView
         style={styles.flex1}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        behavior={Platform.OS === 'ios' ? 'padding' : Platform.OS === 'web' ? undefined : 'height'}
         keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
       >
         {/* Header */}
@@ -919,8 +927,8 @@ const ChatScreen: React.FC = () => {
 };
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#0B141A' },
-  flex1: { flex: 1 },
+  container: { flex: 1, backgroundColor: '#0B141A', ...(Platform.OS === 'web' ? { height: '100%' as any, overflow: 'hidden' as any } : {}) },
+  flex1: { flex: 1, ...(Platform.OS === 'web' ? { height: '100%' as any, overflow: 'hidden' as any } : {}) },
   loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   loadingText: { marginTop: 12, color: '#8696A0', fontSize: 14 },
   errorContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 32 },
@@ -937,8 +945,8 @@ const styles = StyleSheet.create({
   typingIndicator: { fontSize: 12, color: '#00A884', marginTop: 2 },
 
   // Messages
-  messagesArea: { flex: 1, backgroundColor: '#0B141A' },
-  scrollView: { flex: 1 },
+  messagesArea: { flex: 1, backgroundColor: '#0B141A', ...(Platform.OS === 'web' ? { overflow: 'hidden' as any } : {}) },
+  scrollView: { flex: 1, ...(Platform.OS === 'web' ? { overflow: 'auto' as any } : {}) },
   scrollContent: { padding: 8, paddingBottom: 16 },
 
   // Empty State

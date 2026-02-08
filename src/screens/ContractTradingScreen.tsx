@@ -3,10 +3,12 @@ import {
   View,
   Text,
   StyleSheet,
+  ScrollView,
   TouchableOpacity,
   TextInput,
   Switch,
   Alert,
+  Platform,
 } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { colors } from '../theme/colors';
@@ -88,6 +90,7 @@ const ContractTradingScreen = () => {
 
   return (
     <View style={styles.root}>
+      <ScrollView style={styles.modalScroll} contentContainerStyle={styles.modalScrollContent} showsVerticalScrollIndicator={false} bounces={false}>
       <View style={styles.modal}>
         {/* Header */}
         <View style={styles.header}>
@@ -252,6 +255,7 @@ const ContractTradingScreen = () => {
           <Text style={styles.confirmButtonText}>confirm</Text>
         </TouchableOpacity>
       </View>
+      </ScrollView>
     </View>
   );
 };
@@ -261,6 +265,15 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.7)',
     justifyContent: 'flex-end',
+    ...(Platform.OS === 'web' ? { height: '100%' as any } : {}),
+  },
+  modalScroll: {
+    maxHeight: '90%',
+    flexGrow: 0,
+  },
+  modalScrollContent: {
+    flexGrow: 1,
+    justifyContent: 'flex-end',
   },
   modal: {
     backgroundColor: colors.card,
@@ -268,7 +281,6 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 20,
     padding: 20,
     paddingBottom: 40,
-    maxHeight: '90%',
   },
   header: {
     flexDirection: 'row',

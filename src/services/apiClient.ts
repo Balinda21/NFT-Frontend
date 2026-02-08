@@ -1,4 +1,4 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import storage from './storage';
 import { API_BASE_URL } from '../config/api';
 
 /**
@@ -43,7 +43,7 @@ class ApiClient {
    */
   private async getAuthToken(): Promise<string | null> {
     try {
-      return await AsyncStorage.getItem('auth_token');
+      return await storage.getItem('auth_token');
     } catch (error) {
       console.error('Error getting auth token:', error);
       return null;

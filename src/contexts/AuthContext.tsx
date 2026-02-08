@@ -1,5 +1,5 @@
 import React, { createContext, useState, useEffect, useContext, useMemo, useRef } from 'react';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import storage from '../services/storage';
 import { chatService } from '../services/chatService';
 
 interface User {
@@ -68,9 +68,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       try {
         const results = await withTimeout(
           Promise.all([
-            AsyncStorage.getItem('auth_token'),
-            AsyncStorage.getItem('auth_user'),
-            AsyncStorage.getItem('auth_refresh_token')
+            storage.getItem('auth_token'),
+            storage.getItem('auth_user'),
+            storage.getItem('auth_refresh_token')
           ]),
           2000 // 2 second timeout
         );
@@ -92,9 +92,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         } catch (parseError) {
           console.error('Error parsing stored user:', parseError);
           // Clear invalid data (don't await to avoid blocking)
-          AsyncStorage.removeItem('auth_token').catch(() => {});
-          AsyncStorage.removeItem('auth_user').catch(() => {});
-          AsyncStorage.removeItem('auth_refresh_token').catch(() => {});
+          storage.removeItem('auth_token').catch(() => {});
+          storage.removeItem('auth_user').catch(() => {});
+          storage.removeItem('auth_refresh_token').catch(() => {});
         }
       }
     } catch (error) {
@@ -107,10 +107,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const login = async (newToken: string, newUser: User, newRefreshToken?: string) => {
     try {
       // Persist to storage
-      await AsyncStorage.setItem('auth_token', newToken);
-      await AsyncStorage.setItem('auth_user', JSON.stringify(newUser));
+      await storage.setItem('auth_token', newToken);
+      await storage.setItem('auth_user', JSON.stringify(newUser));
       if (newRefreshToken) {
-        await AsyncStorage.setItem('auth_refresh_token', newRefreshToken);
+        await storage.setItem('auth_refresh_token', newRefreshToken);
       }
 
       // Update state
@@ -133,16 +133,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (user) {
       const updatedUser = { ...user, accountBalance: balance };
       setUser(updatedUser);
-      AsyncStorage.setItem('auth_user', JSON.stringify(updatedUser)).catch(() => {});
+      storage.setItem('auth_user', JSON.stringify(updatedUser)).catch(() => {});
     }
   };
 
   const logout = async () => {
     try {
       // Clear storage
-      await AsyncStorage.removeItem('auth_token');
-      await AsyncStorage.removeItem('auth_user');
-      await AsyncStorage.removeItem('auth_refresh_token');
+      await storage.removeItem('auth_token');
+      await storage.removeItem('auth_user');
+      await storage.removeItem('auth_refresh_token');
 
       // Clear state - socket will be disconnected by the useEffect
       setToken(null);
