@@ -63,13 +63,9 @@ const AdminSidebar: React.FC<{ isOpen: boolean; onClose: () => void }> = ({ isOp
 
   const menuItems: SidebarItem[] = [
     { id: 'dashboard', label: 'Dashboard', icon: 'grid-outline', screen: 'AdminDashboard' },
+    { id: 'notifications', label: 'Notifications', icon: 'notifications-outline', screen: 'AdminNotifications' },
     { id: 'chat', label: 'Chats', icon: 'chatbubbles-outline', screen: 'AdminChatSessions' },
     { id: 'users', label: 'Users', icon: 'people-outline', screen: 'AdminUsers' },
-    // TODO: Add these screens when implemented
-    // { id: 'transactions', label: 'Transactions', icon: 'swap-horizontal-outline', screen: 'AdminTransactions' },
-    // { id: 'orders', label: 'Orders', icon: 'cart-outline', screen: 'AdminOrders' },
-    // { id: 'loans', label: 'Loans', icon: 'card-outline', screen: 'AdminLoans' },
-    // { id: 'referrals', label: 'Referrals', icon: 'gift-outline', screen: 'AdminReferrals' },
   ];
 
   const handleNavigate = (screen: string) => {

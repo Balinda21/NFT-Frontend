@@ -98,6 +98,7 @@ const AccountScreen: React.FC = () => {
   }, []);
 
   const [copiedAddress, setCopiedAddress] = useState(false);
+  const [withdrawLoading, setWithdrawLoading] = useState(false);
 
   const currencies = ['USDT', 'ETH', 'BTC'];
 
@@ -173,6 +174,52 @@ const AccountScreen: React.FC = () => {
       },
       { text: 'Cancel', style: 'cancel' },
     ]);
+  };
+
+  // Submit withdrawal request
+  const handleWithdraw = async () => {
+    const amount = parseFloat(withdrawAmount);
+    if (!withdrawAmount || isNaN(amount) || amount <= 0) {
+      Alert.alert('Invalid Amount', 'Please enter a valid amount.');
+      return;
+    }
+    if (amount > accountBalance) {
+      Alert.alert('Insufficient Balance', `Your balance is ${accountBalance.toFixed(2)} USDT.`);
+      return;
+    }
+    if (!walletAddress.trim()) {
+      Alert.alert('Missing Wallet Address', 'Please enter your wallet address.');
+      return;
+    }
+
+    setWithdrawLoading(true);
+    try {
+      const response = await api.post(API_ENDPOINTS.WITHDRAWALS.CREATE, {
+        amount,
+        network: withdrawNetwork,
+        walletAddress: walletAddress.trim(),
+        currency: selectedCurrency,
+      });
+
+      if (response.success) {
+        const newBalance = parseFloat(response.data?.newBalance) || (accountBalance - amount);
+        setAccountBalance(newBalance);
+        updateUserBalance(newBalance);
+        setWithdrawAmount('');
+        setWalletAddress('');
+        Alert.alert(
+          'Withdrawal Submitted',
+          response.message || 'Your withdrawal request has been submitted. It may take a couple of hours to reach your wallet.',
+          [{ text: 'OK' }]
+        );
+      } else {
+        Alert.alert('Error', response.message || 'Withdrawal failed. Please try again.');
+      }
+    } catch (error: any) {
+      Alert.alert('Error', error?.message || 'Something went wrong. Please try again.');
+    } finally {
+      setWithdrawLoading(false);
+    }
   };
 
   // Handle biometric toggle
@@ -590,7 +637,10 @@ const AccountScreen: React.FC = () => {
                   placeholderTextColor={colors.textMuted}
                   keyboardType="numeric"
                 />
-                <TouchableOpacity style={styles.maxButton}>
+                <TouchableOpacity
+                  style={styles.maxButton}
+                  onPress={() => setWithdrawAmount(accountBalance.toString())}
+                >
                   <Text style={styles.maxButtonText}>MAX</Text>
                 </TouchableOpacity>
               </View>
@@ -619,13 +669,19 @@ const AccountScreen: React.FC = () => {
             </View>
 
             {/* Confirm Button */}
-            <TouchableOpacity style={styles.confirmButton}>
-              <Text style={styles.confirmButtonText}>confirm</Text>
+            <TouchableOpacity
+              style={[styles.confirmButton, withdrawLoading && { opacity: 0.7 }]}
+              onPress={handleWithdraw}
+              disabled={withdrawLoading}
+            >
+              <Text style={styles.confirmButtonText}>
+                {withdrawLoading ? 'Processing...' : 'confirm'}
+              </Text>
             </TouchableOpacity>
 
             {/* Withdrawal Info */}
             <Text style={styles.withdrawalInfoText}>
-              Your withdrawal will be sent to your wallet address within the next 24 hours, please be patient and wait for the review to arrive.
+              Your withdrawal will be sent to your wallet address within a couple of hours, please be patient and wait for the review to arrive.
             </Text>
             <Text style={styles.withdrawalFeeText}>
               The currency withdrawal fee is 2%

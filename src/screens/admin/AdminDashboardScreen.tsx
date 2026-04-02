@@ -9,6 +9,7 @@ import {
   ActivityIndicator,
   Dimensions,
   Animated,
+  Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
@@ -18,6 +19,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { api } from '../../services/apiClient';
 import { API_ENDPOINTS } from '../../config/api';
 import AdminSidebar from '../../components/admin/AdminSidebar';
+import { chatService } from '../../services/chatService';
 
 const { width } = Dimensions.get('window');
 
@@ -53,6 +55,7 @@ const AdminDashboardScreen: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [unreadNotifications, setUnreadNotifications] = useState(0);
   const fadeAnim = useRef(new Animated.Value(0)).current;
 
   const loadDashboardData = async () => {
@@ -133,6 +136,40 @@ const AdminDashboardScreen: React.FC = () => {
       setRefreshing(false);
     }
   };
+
+  // Fetch unread notification count on mount
+  useEffect(() => {
+    const fetchUnreadCount = async () => {
+      try {
+        const response = await api.get(API_ENDPOINTS.ADMIN.NOTIFICATIONS_UNREAD_COUNT);
+        if (response.success && response.data) {
+          setUnreadNotifications(response.data.count || 0);
+        }
+      } catch {
+        // non-fatal
+      }
+    };
+    fetchUnreadCount();
+  }, []);
+
+  // Real-time: listen for new withdrawal notifications
+  useEffect(() => {
+    const unsubscribe = chatService.onNewWithdrawal((data) => {
+      setUnreadNotifications((prev) => prev + 1);
+      Alert.alert(
+        '🔔 New Withdrawal Request',
+        `${data.user.name} wants to withdraw ${data.amount} ${data.currency} via ${data.network}\nWallet: ${data.walletAddress}`,
+        [
+          { text: 'Dismiss', style: 'cancel' },
+          {
+            text: 'View Notifications',
+            onPress: () => navigation.navigate('AdminNotifications' as never),
+          },
+        ]
+      );
+    });
+    return () => unsubscribe();
+  }, []);
 
   useEffect(() => {
     loadDashboardData();
@@ -247,6 +284,24 @@ const AdminDashboardScreen: React.FC = () => {
               Welcome back, {user?.firstName || 'Admin'}
             </Text>
           </View>
+          {/* Notification Bell */}
+          <TouchableOpacity
+            style={styles.bellButton}
+            onPress={() => {
+              setUnreadNotifications(0);
+              navigation.navigate('AdminNotifications' as never);
+            }}
+          >
+            <Ionicons name="notifications-outline" size={24} color={colors.textPrimary} />
+            {unreadNotifications > 0 && (
+              <View style={styles.bellBadge}>
+                <Text style={styles.bellBadgeText}>
+                  {unreadNotifications > 99 ? '99+' : unreadNotifications}
+                </Text>
+              </View>
+            )}
+          </TouchableOpacity>
+
           <TouchableOpacity
             style={styles.logoutButton}
             onPress={async () => {
@@ -532,6 +587,30 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: colors.textSecondary,
     marginTop: 2,
+  },
+  bellButton: {
+    padding: 8,
+    borderRadius: 8,
+    backgroundColor: colors.card,
+    marginRight: 8,
+    position: 'relative',
+  },
+  bellBadge: {
+    position: 'absolute',
+    top: 2,
+    right: 2,
+    backgroundColor: colors.danger,
+    borderRadius: 9,
+    minWidth: 18,
+    height: 18,
+    paddingHorizontal: 4,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  bellBadgeText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#fff',
   },
   logoutButton: {
     padding: 8,

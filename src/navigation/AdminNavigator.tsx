@@ -3,6 +3,7 @@ import { createStackNavigator } from '@react-navigation/stack';
 import AdminDashboardScreen from '../screens/admin/AdminDashboardScreen';
 import AdminChatSessionsScreen from '../screens/admin/AdminChatSessionsScreen';
 import AdminUsersScreen from '../screens/admin/AdminUsersScreen';
+import AdminNotificationsScreen from '../screens/admin/AdminNotificationsScreen';
 import ChatScreen from '../screens/ChatScreen';
 
 const Stack = createStackNavigator();
@@ -21,7 +22,7 @@ const AdminNavigator: React.FC = () => {
       <Stack.Screen name="AdminChatSessions" component={AdminChatSessionsScreen} />
       <Stack.Screen name="AdminChat" component={ChatScreen} />
       <Stack.Screen name="AdminUsers" component={AdminUsersScreen} />
-      {/* Add more admin screens here as needed */}
+      <Stack.Screen name="AdminNotifications" component={AdminNotificationsScreen} />
     </Stack.Navigator>
   );
 };

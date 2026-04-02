@@ -62,7 +62,6 @@ const OptionTradingScreen = () => {
 
   // Success modal state
   const [showSuccess, setShowSuccess] = useState(false);
-  const [successProfit, setSuccessProfit] = useState(0);
   const [successNewBalance, setSuccessNewBalance] = useState(0);
   const checkScale = useRef(new Animated.Value(0)).current;
   const checkOpacity = useRef(new Animated.Value(0)).current;
@@ -152,6 +151,7 @@ const OptionTradingScreen = () => {
         setCurrentOrderId(response.data.order.id);
         setOrderAmount(amountNum);
         setOrderExpectedProfit(response.data.order.expectedProfit || calculateExpected());
+        setBalance(prev => prev - amountNum);
         setShowCountdown(true);
       } else {
         Alert.alert('Error', response.message || 'Failed to place order');
@@ -171,35 +171,13 @@ const OptionTradingScreen = () => {
       setShowCountdown(false);
       setCurrentOrderId(null);
 
-      if (response.success) {
-        const newBalance = response.data?.newBalance;
-        const profit = response.data?.order?.profit;
-
-        setSuccessProfit(profit || orderExpectedProfit);
-        setSuccessNewBalance(newBalance || (balance + (profit || orderExpectedProfit)));
-        setBalance(newBalance || (balance + (profit || orderExpectedProfit)));
-        setShowSuccess(true);
-        animateSuccess();
-      } else {
-        // If the response isn't success but the order might have completed anyway,
-        // calculate locally and show success
-        const localProfit = orderExpectedProfit;
-        const localNewBalance = balance + localProfit;
-        setSuccessProfit(localProfit);
-        setSuccessNewBalance(localNewBalance);
-        setBalance(localNewBalance);
-        setShowSuccess(true);
-        animateSuccess();
-      }
+      setSuccessNewBalance(balance);
+      setShowSuccess(true);
+      animateSuccess();
     } catch (error: any) {
       setShowCountdown(false);
       setCurrentOrderId(null);
-      // Even on error, show success with local calculation since order was created
-      const localProfit = orderExpectedProfit;
-      const localNewBalance = balance + localProfit;
-      setSuccessProfit(localProfit);
-      setSuccessNewBalance(localNewBalance);
-      setBalance(localNewBalance);
+      setSuccessNewBalance(balance);
       setShowSuccess(true);
       animateSuccess();
     }
@@ -409,14 +387,14 @@ const OptionTradingScreen = () => {
               </View>
             </Animated.View>
 
-            <Text style={successStyles.title}>Trade Successful!</Text>
+            <Text style={successStyles.title}>Trade Placed</Text>
             <Text style={successStyles.subtitle}>{symbol}</Text>
 
-            {/* Profit Card */}
+            {/* Amount Deducted Card */}
             <View style={successStyles.profitCard}>
-              <Text style={successStyles.profitLabel}>Profit Earned</Text>
-              <Text style={successStyles.profitAmount}>
-                +${successProfit.toFixed(2)}
+              <Text style={successStyles.profitLabel}>Amount Deducted</Text>
+              <Text style={[successStyles.profitAmount, { color: '#ff4d4d' }]}>
+                -${orderAmount.toFixed(2)}
               </Text>
             </View>
 

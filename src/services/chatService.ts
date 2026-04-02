@@ -306,6 +306,30 @@ class ChatService {
   }
 
   /**
+   * Listen for new withdrawal requests (admin only)
+   */
+  onNewWithdrawal(callback: (data: {
+    notificationId: string;
+    transactionId: string;
+    user: { id: string; name: string; email: string };
+    amount: number;
+    fee: number;
+    currency: string;
+    network: string;
+    walletAddress: string;
+    status: string;
+    createdAt: string;
+  }) => void) {
+    if (!this.socket) return () => {};
+
+    this.socket.on('new-withdrawal', callback);
+
+    return () => {
+      this.socket?.off('new-withdrawal', callback);
+    };
+  }
+
+  /**
    * Get unread count
    */
   async getUnreadCount(): Promise<number> {
