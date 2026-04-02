@@ -18,6 +18,7 @@ import { colors } from '../theme/colors';
 import { api } from '../services/apiClient';
 import { API_ENDPOINTS } from '../config/api';
 import CountdownModal from '../components/CountdownModal';
+import { chatService } from '../services/chatService';
 
 type OptionPeriod = {
   seconds: number;
@@ -82,6 +83,13 @@ const OptionTradingScreen = () => {
       }
     };
     fetchBalance();
+
+    // Listen for real-time balance updates from server
+    const unsubscribe = chatService.onBalanceUpdated((data) => {
+      const updated = parseFloat(data.accountBalance);
+      if (!isNaN(updated)) setBalance(updated);
+    });
+    return () => unsubscribe();
   }, []);
 
   const handleMax = () => {
